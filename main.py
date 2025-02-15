@@ -31,16 +31,18 @@ def is_daytime():
     return current_hour >= DAY_START or current_hour < NIGHT_START  # 16:00-10:00 = Daytime, 10:00-16:00 = Nighttime
 
 def get_target_vpd():
-    """Prompt the user for a target Leaf VPD value and validate input."""
-    while True:
-        try:
-            target_vpd = float(input("🎯 Enter your target Leaf VPD (kPa): "))
-            if 0.0 < target_vpd < 3.0:  # Ensuring a realistic VPD range
-                return target_vpd
-            else:
-                print("❌ Please enter a value between 0.1 and 3.0 kPa.")
-        except ValueError:
-            print("❌ Invalid input! Please enter a numeric value.")
+    """Retrieve the target Leaf VPD from an environment variable, with a default fallback."""
+    try:
+        target_vpd = float(os.getenv("TARGET_LEAF_VPD", 1.2))  # Default to 1.2 if not set
+        if 0.1 <= target_vpd <= 3.0:  # Ensure it's within a valid range
+            return target_vpd
+        else:
+            print("❌ Invalid TARGET_LEAF_VPD. Using default value of 1.2 kPa.")
+            return 1.2
+    except ValueError:
+        print("❌ Error: TARGET_LEAF_VPD is not a valid number. Using default value of 1.2 kPa.")
+        return 1.2
+
 
 async def adjust_conditions(target_vpd, vpd_air, tolerance=0.02):
     """
@@ -78,7 +80,8 @@ async def monitor_vpd():
     Continuously monitor VPD and adjust humidifier/exhaust reactively.
     """
     # Ask for target Leaf VPD when the program starts
-    target_vpd = get_target_vpd()
+    target_vpd = float(os.getenv("TARGET_LEAF_VPD", 1.2))  # Fetch target VPD from environment variables
+
     print(f"✅ Monitoring started with Target Leaf VPD: {target_vpd} kPa (±0.02 tolerance)")
 
     while True:
