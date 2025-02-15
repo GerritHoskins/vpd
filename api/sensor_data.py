@@ -15,7 +15,6 @@ tapo_password = os.getenv("TAPO_PASSWORD")
 sensor_ip = os.getenv("SENSOR_IP")  # IP of Tapo sensor hub (H100)
 humidifier_ip = os.getenv("HUMIDIFIER_IP")
 
-
 # Convert day and night start times to integers (default: 16 for day, 10 for night)
 DAY_START = int(os.getenv("DAY_START", 16))  # Ensure it's an integer
 NIGHT_START = int(os.getenv("NIGHT_START", 10))  # Ensure it's an integer
@@ -34,7 +33,7 @@ async def get_sensor_data():
     for child in child_device_list:
         if isinstance(child, T31XResult):  # Ensure it's a T31X sensor
             air_temp = round(child.current_temperature or 0, 1)
-            leaf_temp = round(max(air_temp - 0.5, 0), 1)  # Estimated leaf temp
+            leaf_temp = round(max(air_temp - 1.0, 0), 1)  # Estimated leaf temp
             humidity = round(child.current_humidity or 0, 1)
 
             return air_temp, leaf_temp, humidity

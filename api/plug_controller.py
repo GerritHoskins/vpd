@@ -1,8 +1,7 @@
 import os
 from dotenv import load_dotenv
 from tapo import ApiClient
-from tapo.requests import AlarmRingtone, AlarmVolume, AlarmDuration
-from tapo.responses import T31XResult
+from api.state import exhaust_state, humidifier_state
 
 load_dotenv()
 
@@ -32,6 +31,10 @@ except ValueError:
 
 client = ApiClient(tapo_username, tapo_password)
 
+async def force_on_humidifier():
+    humidifier = await client.p100(humidifier_ip)
+    await humidifier.on()
+
 async def force_off_humidifier():
     humidifier = await client.p100(humidifier_ip)
     await humidifier.off()
@@ -40,43 +43,60 @@ async def force_off_exhaust():
     exhaust = await client.p100(exhaust_ip)
     await exhaust.off()
 
-async def toggle_humidifier(vpd_air, target_vpd, humidity, daytime, tolerance=0.2):
+async def toggle_humidifier(vpd_air, target_vpd, humidity, daytime, tolerance=0.02):
     """
     Turn the humidifier ON/OFF based on user-defined VPD and humidity conditions.
+    Prevents redundant toggling.
     """
+    global humidifier_state  # Use the global variable to track state
     humidifier = await client.p100(humidifier_ip)
+
     vpd_min = target_vpd - tolerance
     vpd_max = target_vpd + tolerance
 
     if humidity < HUMIDITY_OVERRIDE_THRESHOLD:
-        print("⚠️ Humidity too low (<40%)! Forcing humidifier ON.")
-        await humidifier.on()
-        return  # Skip normal VPD-based logic if override is active
+        if not humidifier_state:
+            print("⚠️ Humidity too low (<40%)! Forcing humidifier ON.")
+            await humidifier.on()
+            humidifier_state = True  # Update state
+        return
 
-    if vpd_air > vpd_max:
-        print("🔥 VPD too high! Turning ON the humidifier...")
-        await humidifier.on()
-    elif vpd_air < vpd_min:
-        print("💧 VPD too low! Turning OFF the humidifier...")
-        await humidifier.off()
+    if vpd_air < vpd_min:
+        if not humidifier_state:
+            print("💦 VPD too low! Turning ON the humidifier...")
+            await humidifier.on()
+            humidifier_state = True  # Update state
+    elif vpd_air > vpd_max:
+        if humidifier_state:
+            print("🌬️ VPD too high! Turning OFF the humidifier...")
+            await humidifier.off()
+            humidifier_state = False  # Update state
 
-
-async def toggle_exhaust(vpd_air, target_vpd, humidity, daytime, tolerance=0.2):
+async def toggle_exhaust(vpd_air, target_vpd, humidity, daytime, tolerance=0.02):
     """
     Turn the exhaust fan ON/OFF based on user-defined VPD and humidity conditions.
+    Prevents redundant toggling.
     """
+    global exhaust_state  # Reference the global variable
     exhaust_fan = await client.p100(exhaust_ip)
+
     vpd_min = target_vpd - tolerance
     vpd_max = target_vpd + tolerance
 
     if humidity < HUMIDITY_OVERRIDE_THRESHOLD:
-        print("⚠️ Humidity too low (<40%)! Forcing exhaust OFF.")
-        await exhaust_fan.off()
-        return  # Skip normal VPD-based logic if override is active
+        if exhaust_state:
+            print("⚠️ Humidity too low (<40%)! Forcing exhaust OFF.")
+            await exhaust_fan.off()
+            exhaust_state = False  # Update state
+        return
 
     if vpd_air > vpd_max:
-        print("🌬️ VPD too high! Turning ON the exhaust fan...")
-        await exhaust_fan.on()
+        if not exhaust_state:
+            print("🌬️ VPD too high! Turning ON the exhaust fan...")
+            await exhaust_fan.on()
+            exhaust_state = True  # Update state
     elif vpd_air < vpd_min:
-        print("💨 VPD too low! Turning OFF the exhaust fan...")
-        await exhaust_fan.off()
+        if exhaust_state:
+            print("💨 VPD too low! Turning OFF the exhaust fan...")
+            await exhaust_fan.off()
+            exhaust_state = False  # Update state
