@@ -1,7 +1,11 @@
 import os
+import sys
 import asyncio
 import datetime
 from dotenv import load_dotenv
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from utils.calculate import calculate_vpd
 from utils.print_vpd_status import print_vpd_status
 from utils.logs import log_to_csv, log_to_json
