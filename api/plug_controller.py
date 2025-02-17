@@ -11,7 +11,7 @@ load_dotenv()
 tapo_username = os.getenv("TAPO_USERNAME")
 tapo_password = os.getenv("TAPO_PASSWORD")
 
-sensor_ip = os.getenv("SENSOR_IP")  # IP of Tapo sensor hub (H100)
+hub_ip = os.getenv("HUB_IP")  # IP of Tapo hub hub (H100)
 humidifier_ip = os.getenv("HUMIDIFIER_IP")
 exhaust_ip = os.getenv("EXHAUST_IP")
 

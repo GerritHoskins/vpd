@@ -1,5 +1,5 @@
 state = {
-    "humidifier": True,  # False = OFF, True = ON
-    "exhaust": True      # False = OFF, True = ON
+    "humidifier": False,  # False = OFF, True = ON
+    "exhaust": False      # False = OFF, True = ON
 }
 
