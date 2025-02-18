@@ -1,9 +1,11 @@
 from flask import Flask, request, jsonify
 import asyncio
-from tapo_controller import get_device_status, toggle_humidifier, toggle_exhaust, get_sensor_data
+from tapo_controller import get_device_status, toggle_humidifier, toggle_exhaust, get_sensor_data, get_device_info_json
 from state import state  # Import global state
+from flask_cors import CORS  # Import CORS
 
 app = Flask(__name__)
+CORS(app, supports_credentials=True)
 
 # Flask API Route to Get Device Status
 @app.route('/device_status', methods=['GET'])
@@ -49,6 +51,14 @@ def exhaust_control(state_requested):
     else:
         return jsonify({"error": "Invalid state. Use 'on' or 'off'."}), 400
 
+    return jsonify(response)
+
+# Flask API Route to Get all the properties returned from the Tapo API as JSON
+@app.route('/get_device_info_json', methods=['GET'])
+def sensor_data():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    response = loop.run_until_complete(get_device_info_json())
     return jsonify(response)
 
 # Flask API Route to Check Current State

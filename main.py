@@ -1,7 +1,7 @@
 import os
 import sys
+import time
 import asyncio
-import datetime
 from dotenv import load_dotenv
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -10,40 +10,45 @@ from utils.calculate import calculate_vpd
 from utils.print_vpd_status import print_vpd_status
 from utils.logs import log_to_csv, log_to_json
 from utils.config import get_target_vpd
-from api.tapo_controller import get_sensor_data, adjust_conditions
+from api.tapo_controller import get_sensor_data, adjust_conditions, energy_saving_mode, air_exchange_cycle
 
 load_dotenv()
 
 DAY_START = int(os.getenv("DAY_START", 16))
 NIGHT_START = int(os.getenv("NIGHT_START", 10))
-TARGET_VPD = get_target_vpd()
+KPA_TOLERANCE = float(os.getenv("KPA_TOLERANCE", 0.1))
 
-def is_daytime():
-    """Check if it's daytime based on the 24-hour schedule."""
-    current_hour = datetime.datetime.now().hour
-    return current_hour >= DAY_START or current_hour < NIGHT_START
-
-async def monitor_vpd():
-    """Continuously monitor VPD and adjust humidifier/exhaust reactively."""
-    print(f"✅ Monitoring started with Target Leaf VPD: {TARGET_VPD} kPa (±0.02 tolerance)")
+async def monitor_vpd(target_vpd_min, target_vpd_max):
+    """Continuously monitor VPD and adjust devices."""
+    last_air_exchange = time.time()
 
     while True:
         air_temp, leaf_temp, humidity = await get_sensor_data()
         vpd_air, vpd_leaf = calculate_vpd(air_temp, leaf_temp, humidity)
 
-        print(f"🌡️ Air: {air_temp}°C | 🌿 Leaf: {leaf_temp}°C | 💧 Humidity: {humidity}%")
-        print(f"🌫️ Air VPD: {vpd_air} kPa | Leaf VPD: {vpd_leaf} kPa")
-        print_vpd_status(vpd_air, vpd_leaf)
+        print("\n-------------------- 🌡️ Sensor Readings --------------------")
+        print(f"Air Temp: {air_temp}°C | Leaf Temp: {leaf_temp}°C | Humidity: {humidity}%")
+        print(f"Air VPD: {vpd_air} kPa | Leaf VPD: {vpd_leaf} kPa")
+        print("------------------------------------------------------------")
 
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_to_csv(timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf)
-        log_to_json(timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf)
+        if vpd_leaf < target_vpd_min:
+            print("🔵 VPD TOO LOW! Adjusting conditions... 💦")
+            await adjust_conditions(target_vpd_min, target_vpd_max, vpd_leaf, vpd_air, humidity)
 
-        # Adjust conditions dynamically
-        await adjust_conditions(TARGET_VPD, vpd_leaf, vpd_air, humidity, tolerance=0.02)
+        elif vpd_leaf > target_vpd_max:
+            print("🔴 VPD TOO HIGH! Adjusting conditions... 🔥")
+            await adjust_conditions(target_vpd_min, target_vpd_max, vpd_leaf, vpd_air, humidity)
 
-        print("🔄 Waiting 30 seconds before next check...")
-        await asyncio.sleep(30)
+        else:
+            print("✅ VPD is within range. No adjustment needed.")
+
+        # Call Air Exchange
+        #last_air_exchange = await air_exchange_cycle(last_air_exchange)
+
+        print("🔄 Waiting 5 seconds before next check...\n")
+        await asyncio.sleep(5)
+
 
 if __name__ == "__main__":
-    asyncio.run(monitor_vpd())
+    target_vpd_min, target_vpd_max = get_target_vpd() 
+    asyncio.run(monitor_vpd(target_vpd_min, target_vpd_max))
