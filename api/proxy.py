@@ -55,7 +55,7 @@ def exhaust_control(state_requested):
 
 # Flask API Route to Get all the properties returned from the Tapo API as JSON
 @app.route('/get_device_info_json', methods=['GET'])
-def sensor_data():
+def get_device_info_json():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     response = loop.run_until_complete(get_device_info_json())
