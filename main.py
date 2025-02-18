@@ -43,7 +43,7 @@ async def monitor_vpd(target_vpd_min, target_vpd_max):
             print("✅ VPD is within range. No adjustment needed.")
 
         # Call Air Exchange
-        #last_air_exchange = await air_exchange_cycle(last_air_exchange)
+        last_air_exchange = await air_exchange_cycle(last_air_exchange)
 
         print("🔄 Waiting 5 seconds before next check...\n")
         await asyncio.sleep(5)

@@ -54,12 +54,18 @@ def exhaust_control(state_requested):
     return jsonify(response)
 
 # Flask API Route to Get all the properties returned from the Tapo API as JSON
-@app.route('/get_device_info_json', methods=['GET'])
-def get_device_info_json():
+@app.route('/device_info_json', methods=['GET'])
+def device_info_json():
+    """Flask route to fetch Tapo device info."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    response = loop.run_until_complete(get_device_info_json())
-    return jsonify(response)
+    
+    response = loop.run_until_complete(get_device_info_json())  # Correct async function call
+    
+    if isinstance(response, dict):  # Ensure response is a dict
+        return jsonify(response)  # Return as JSON without .to_dict()
+    else:
+        return jsonify(response.to_dict())  # Keep for compatibility in case it's another object
 
 # Flask API Route to Check Current State
 @app.route('/device_state', methods=['GET'])
