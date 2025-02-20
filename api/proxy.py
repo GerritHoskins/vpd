@@ -2,8 +2,8 @@ from flask import Flask, request, jsonify, request, Response
 import requests
 import asyncio
 from tapo_controller import get_device_status, toggle_humidifier, toggle_exhaust, get_sensor_data, get_device_info_json
-from state import state  # Import global state
-from flask_cors import CORS  # Import CORS
+from state import state  
+from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
@@ -110,13 +110,17 @@ def set_vpd_target():
     VPD_TARGET["min"], VPD_TARGET["max"] = VPD_MODES[stage]
     return jsonify({"message": f"VPD set to {VPD_TARGET['min']} - {VPD_TARGET['max']} kPa"})
 
-
-@app.route('/get_vpd_target', methods=['GET'])
+CURRENT_VPD_STAGE = "vegetative"
+@app.route("/get_vpd_target", methods=["GET"])
 def get_vpd_target():
-    """Get the current selected VPD target range."""
-    if VPD_TARGET["min"] is None:
-        return jsonify({"error": "No VPD target selected"}), 400
-    return jsonify(VPD_TARGET)
-
+    """Returns the current VPD target stage."""
+    try:
+        if not CURRENT_VPD_STAGE:
+            return jsonify({"error": "No VPD stage set"}), 400
+        return jsonify({"stage": CURRENT_VPD_STAGE})
+    except Exception as e:
+        print(f"⚠️ Error fetching VPD target: {e}")
+        return jsonify({"error": "Server error"}), 500
+    
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000)

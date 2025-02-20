@@ -50,6 +50,9 @@ async def monitor_vpd(target_vpd_min, target_vpd_max):
 
         else:
             print("✅ VPD is within range. No adjustment needed.")
+            
+        log_to_csv(air_temp, leaf_temp, humidity, vpd_air, vpd_leaf)
+        log_to_json(air_temp, leaf_temp, humidity, vpd_air, vpd_leaf)
 
         # Call Air Exchange
         last_air_exchange = await air_exchange_cycle(last_air_exchange, target_vpd_min, target_vpd_max)
