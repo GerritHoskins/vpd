@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import requests
 import asyncio
 from dotenv import load_dotenv
 
@@ -14,6 +15,8 @@ from api.tapo_controller import get_sensor_data, adjust_conditions, energy_savin
 
 load_dotenv()
 
+BASE_URL = os.getenv('BASE_URL')
+
 DAY_START = int(os.getenv("DAY_START", 16))
 NIGHT_START = int(os.getenv("NIGHT_START", 10))
 KPA_TOLERANCE = float(os.getenv("KPA_TOLERANCE", 0.1))
@@ -21,6 +24,12 @@ KPA_TOLERANCE = float(os.getenv("KPA_TOLERANCE", 0.1))
 async def monitor_vpd(target_vpd_min, target_vpd_max):
     """Continuously monitor VPD and adjust devices."""
     last_air_exchange = time.time()
+
+    # Convert VPD targets to float
+    target_vpd_min = float(target_vpd_min)
+    target_vpd_max = float(target_vpd_max)
+
+    print(f"✅ Monitoring started with Target VPD: {target_vpd_min} - {target_vpd_max} kPa (±{KPA_TOLERANCE} tolerance)")
 
     while True:
         air_temp, leaf_temp, humidity = await get_sensor_data()
@@ -43,12 +52,18 @@ async def monitor_vpd(target_vpd_min, target_vpd_max):
             print("✅ VPD is within range. No adjustment needed.")
 
         # Call Air Exchange
-        last_air_exchange = await air_exchange_cycle(last_air_exchange)
+        last_air_exchange = await air_exchange_cycle(last_air_exchange, target_vpd_min, target_vpd_max)
 
         print("🔄 Waiting 5 seconds before next check...\n")
         await asyncio.sleep(5)
 
 
 if __name__ == "__main__":
-    target_vpd_min, target_vpd_max = get_target_vpd() 
+    # Fetch target VPD values from API
+    response = requests.get(f"{BASE_URL}/get_vpd_target").json()
+    
+    # Ensure they are floats before passing to `monitor_vpd`
+    target_vpd_min = float(response.get("target_vpd_min", 1.2))
+    target_vpd_max = float(response.get("target_vpd_max", 1.4))
+
     asyncio.run(monitor_vpd(target_vpd_min, target_vpd_max))

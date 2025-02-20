@@ -30,25 +30,46 @@ async def get_device_info_json():
     device = await client.h100(HUB_IP)
     return await device.get_device_info_json()    
 
-async def air_exchange_cycle(last_air_exchange):
+async def air_exchange_cycle(last_air_exchange, target_vpd_min, target_vpd_max):
     """
-    Runs an air exchange cycle every 30 minutes for 5 minutes.
-    Ensures the exhaust fan turns ON for fresh air supply.
+    Adjusts air exchange duration & interval dynamically based on selected VPD stage.
+    Ensures the exhaust fan runs periodically for fresh air supply.
     """
-    AIR_EXCHANGE_INTERVAL = 30 * 60  # 30 minutes
-    AIR_EXCHANGE_DURATION = 5 * 60   # 5 minutes
+
+    # Define air exchange settings for each stage
+    AIR_EXCHANGE_SETTINGS = {
+        "propagation": {"interval": 45 * 60, "duration": 2 * 60},  # Every 45 min, 2 min duration
+        "vegetative": {"interval": 30 * 60, "duration": 4 * 60},  # Every 30 min, 4 min duration
+        "flowering": {"interval": 20 * 60, "duration": 6 * 60},  # Every 20 min, 6 min duration
+    }
+
+    # Determine which VPD mode is active
+    if target_vpd_max <= 0.8:
+        stage = "propagation"
+    elif target_vpd_max <= 1.2:
+        stage = "vegetative"
+    else:
+        stage = "flowering"
+
+    settings = AIR_EXCHANGE_SETTINGS[stage]
+    AIR_EXCHANGE_INTERVAL = settings["interval"]
+    AIR_EXCHANGE_DURATION = settings["duration"]
 
     current_time = time.time()
+
+    # Check if the last air exchange exceeded the set interval
     if current_time - last_air_exchange >= AIR_EXCHANGE_INTERVAL:
-        print("\n🔄 **Air Exchange Cycle: Venting Air for 5 minutes...**")
+        print(f"\n🔄 **Air Exchange Cycle: {stage.capitalize()} mode - Venting Air for {AIR_EXCHANGE_DURATION // 60} minutes...**")
+
         if not state["exhaust"]:  # Only turn ON if it's OFF
             await toggle_exhaust(True)
 
-        await asyncio.sleep(AIR_EXCHANGE_DURATION)
+        await asyncio.sleep(AIR_EXCHANGE_DURATION)  # Keep exhaust ON for the duration
 
         print("✅ **Air Exchange Complete: Restoring previous state.**")
-        await toggle_exhaust(False)  # Turn OFF exhaust after 5 minutes
-        return time.time()  # Return updated timestamp
+        await toggle_exhaust(False)  # Turn OFF exhaust after the cycle
+
+        return time.time()  # Update last air exchange timestamp
 
     return last_air_exchange  # No change if air exchange was not needed
 
