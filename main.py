@@ -65,7 +65,7 @@ async def monitor_vpd(target_vpd_min, target_vpd_max):
         else:
             print("✅ VPD is within range. No adjustment needed.")
             
-        #log_to_csv(timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf, state["exhaust"], state["humidifier"], state["dehumidifier"])
+        log_to_csv(timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf, state["exhaust"], state["humidifier"], state["dehumidifier"])
         #log_to_json(timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf, state["exhaust"], state["humidifier"], state["dehumidifier"])
 
         # Call Air Exchange

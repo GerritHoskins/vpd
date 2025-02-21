@@ -2,8 +2,10 @@ from flask import Flask, request, jsonify, request, Response
 import requests
 import joblib
 import asyncio
+import pandas as pd
 import numpy as np
 from tapo_controller import get_device_status, toggle_humidifier, toggle_dehumidifier, get_dehumidifier_info_json, toggle_exhaust, get_sensor_data, get_exhaust_info_json, get_humidifier_info_json
+from utils.calculate import calculate_vpd
 from state import state  
 from flask_cors import CORS
 
@@ -13,6 +15,8 @@ CORS(app, supports_credentials=True)
 exhaust_model = joblib.load("model/exhaust_model.pkl")
 humidifier_model = joblib.load("model/humidifier_model.pkl")
 dehumidifier_model = joblib.load("model/dehumidifier_model.pkl")
+anomaly_detector = joblib.load("model/anomaly_detector.pkl")
+q_table = joblib.load("model/q_learning.pkl")
 
 # Store selected VPD range
 VPD_TARGET = {"min": None, "max": None}
@@ -221,6 +225,82 @@ def get_vpd_target():
     except Exception as e:
         print(f"⚠️ Error fetching VPD target: {e}")
         return jsonify({"error": "Server error"}), 500
+
+@app.route("/get_prediction_data", methods=["GET"])
+def get_prediction_data():
+    """Fetch real-time sensor data and calculate VPD."""
+    try:
+        # **Run async function in an event loop**
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        air_temp, leaf_temp, humidity = loop.run_until_complete(get_sensor_data())
+
+        # **Calculate VPD**
+        vpd_air, vpd_leaf = calculate_vpd(air_temp, leaf_temp, humidity)
+
+        # **Return proper JSON response**
+        return jsonify({
+            "temperature": air_temp,
+            "leaf_temperature": leaf_temp,
+            "humidity": humidity,
+            "vpd_air": vpd_air,
+            "vpd_leaf": vpd_leaf
+        })
+
+    except Exception as e:
+        print(f"⚠️ Error fetching prediction data: {e}")
+        return jsonify({"error": "Server error"}), 500
+    
+
+@app.route("/detect_anomaly", methods=["POST"])
+def detect_anomaly():
+    """Detect anomalies based on incoming sensor data."""
+    try:
+        data = request.get_json()
+
+        # Ensure all required fields exist
+        required_fields = ["temperature", "leaf_temperature", "humidity", "vpd_air", "vpd_leaf"]
+        missing_fields = [field for field in required_fields if field not in data]
+
+        if missing_fields:
+            return jsonify({"error": f"Missing fields: {', '.join(missing_fields)}"}), 400
+
+        # Convert data to DataFrame (ensure correct feature names)
+        df = pd.DataFrame([data], columns=required_fields)
+
+        # Make prediction (IsolationForest returns -1 for anomalies, 1 for normal)
+        anomaly_score = anomaly_detector.predict(df)
+
+        # Convert NumPy bool to Python bool for JSON serialization
+        anomaly_detected = bool(anomaly_score[0] == -1)
+
+        return jsonify({"anomaly_detected": anomaly_detected})
+
+    except Exception as e:
+        print(f"⚠️ Anomaly Detection Error: {e}")
+        return jsonify({"error": "Server error"}), 500
+
+
+@app.route("/optimize_control", methods=["POST"])
+def optimize_control():
+    """Predicts best device actions using RL model."""
+    try:
+        data = request.get_json()
+        state = (data["temperature"], data["humidity"], data["vpd_air"], data["vpd_leaf"])
+
+        # Select best action
+        if state in q_table:
+            best_action = np.argmax(q_table[state])
+        else:
+            best_action = np.random.choice([0, 1, 2, 3, 4, 5])  # Random action if state is new
+
+        action_map = ["exhaust_on", "exhaust_off", "humidifier_on", "humidifier_off", "dehumidifier_on", "dehumidifier_off"]
+        return jsonify({"best_action": action_map[best_action]})
+
+    except Exception as e:
+        print(f"⚠️ RL Control Error: {e}")
+        return jsonify({"error": "Server error"}), 500
+    
     
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000)
