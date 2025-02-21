@@ -5,7 +5,7 @@ import os
 LOG_CSV_FILE = "vpd_log.csv"
 LOG_JSON_FILE = "vpd_log.json"
 
-def log_to_csv(timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf):
+def log_to_csv(timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf, exhaust_state, humidifier_state, dehumidifier_state):
     """Logs the sensor data to a CSV file with UTF-8 encoding to prevent character issues."""
     file_exists = os.path.isfile(LOG_CSV_FILE)
 
@@ -14,12 +14,12 @@ def log_to_csv(timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf):
 
         # Write headers only if the file is new
         if not file_exists:
-            writer.writerow(["Timestamp", "Air Temperature (°C)", "Leaf Temperature (°C)", "Humidity (%)", "Air VPD (kPa)", "Leaf VPD (kPa)"])
+            writer.writerow(["Timestamp", "Air Temperature (°C)", "Leaf Temperature (°C)", "Humidity (%)", "Air VPD (kPa)", "Leaf VPD (kPa)", "Exhaust", "Humidifier", "Dehumidifier"])
 
-        writer.writerow([timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf])
+        writer.writerow([timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf, exhaust_state, humidifier_state, dehumidifier_state])
 
 
-def log_to_json(timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf):
+def log_to_json(timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf, exhaust_state, humidifier_state, dehumidifier_state):
     """Logs the sensor data to a JSON file with UTF-8 encoding to prevent character issues."""
     log_entry = {
         "Timestamp": timestamp,
@@ -27,7 +27,10 @@ def log_to_json(timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf):
         "Leaf Temperature (°C)": leaf_temp,
         "Humidity (%)": humidity,
         "Air VPD (kPa)": vpd_air,
-        "Leaf VPD (kPa)": vpd_leaf
+        "Leaf VPD (kPa)": vpd_leaf,
+        "Exhaust": exhaust_state,
+        "Humidifier": humidifier_state, 
+        "Dehumidifier": dehumidifier_state
     }
 
     # Load existing JSON data

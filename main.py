@@ -3,15 +3,16 @@ import sys
 import time
 import requests
 import asyncio
+import json
 from dotenv import load_dotenv
+import time
+from api.state import state
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from utils.calculate import calculate_vpd
-from utils.print_vpd_status import print_vpd_status
 from utils.logs import log_to_csv, log_to_json
-from utils.config import get_target_vpd
-from api.tapo_controller import get_sensor_data, adjust_conditions, energy_saving_mode, air_exchange_cycle
+from api.tapo_controller import get_humidifier_status, get_exhaust_status, get_sensor_data, adjust_conditions, get_dehumidifier_status, air_exchange_cycle
 
 load_dotenv()
 
@@ -23,7 +24,20 @@ KPA_TOLERANCE = float(os.getenv("KPA_TOLERANCE", 0.1))
 
 async def monitor_vpd(target_vpd_min, target_vpd_max):
     """Continuously monitor VPD and adjust devices."""
+    
+    # Set initial status of exhaust and humidifier
+    humidifier_on = await get_humidifier_status()
+    state["humidifier"] = getattr(humidifier_on, "device_on", None)
+
+    exhaust_on = await get_exhaust_status()
+    state["exhaust"] = getattr(exhaust_on, "device_on", None)
+    
+    dehumidifier_on = await get_dehumidifier_status()
+    state["dehumidifier"] = getattr(dehumidifier_on, "device_on", None)
+    
+    
     last_air_exchange = time.time()
+    timestamp = time.time()
 
     # Convert VPD targets to float
     target_vpd_min = float(target_vpd_min)
@@ -51,8 +65,8 @@ async def monitor_vpd(target_vpd_min, target_vpd_max):
         else:
             print("✅ VPD is within range. No adjustment needed.")
             
-        log_to_csv(air_temp, leaf_temp, humidity, vpd_air, vpd_leaf)
-        log_to_json(air_temp, leaf_temp, humidity, vpd_air, vpd_leaf)
+        #log_to_csv(timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf, state["exhaust"], state["humidifier"], state["dehumidifier"])
+        #log_to_json(timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf, state["exhaust"], state["humidifier"], state["dehumidifier"])
 
         # Call Air Exchange
         last_air_exchange = await air_exchange_cycle(last_air_exchange, target_vpd_min, target_vpd_max)
