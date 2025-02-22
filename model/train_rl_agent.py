@@ -42,7 +42,7 @@ epsilon = 0.1  # Exploration rate
 for index, row in data.iterrows():
     state = (row["temperature"], row["humidity"], row["vpd_air"], row["vpd_leaf"])
     action = np.random.choice(list(action_map.values()))  # Random action
-    reward = -abs(row["vpd_leaf"] - 1.2)  # Reward closer to 1.2 kPa VPD
+    reward = -abs(row["vpd_leaf"] - 1.4)  # Reward closer to 1.2 kPa VPD
 
     # Q-learning update
     best_next_action = np.argmax(Q_table[state])
@@ -51,3 +51,10 @@ for index, row in data.iterrows():
 # Save Q-table
 joblib.dump(dict(Q_table), "model/q_learning.pkl")
 print("✅ Reinforcement Learning Model saved successfully!")
+
+def choose_best_action(state):
+    """Selects the best action for a given sensor state using Q-learning."""
+    if state in Q_table:
+        return np.argmax(Q_table[state])  # Choose action with highest reward
+    else:
+        return np.random.choice(list(range(6)))  # If unknown, pick random action

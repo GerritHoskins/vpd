@@ -241,7 +241,7 @@ async def get_sensor_data(retries=3, delay=2):
     return 20.0, 18.8, 50.0  # Return safe defaults after repeated failures
 
 async def adjust_conditions(target_vpd_min, target_vpd_max, vpd_leaf, vpd_air, humidity, tolerance=KPA_TOLERANCE):
-    """Gradually adjust humidifier, dehumidifier, and exhaust for smooth transitions."""
+    """Gradually adjust humidifier, dehumidifier, and exhaust for smooth transitions, while enforcing max humidity limits."""
     
     air_temp, leaf_temp, humidity = await get_sensor_data()
     target_vpd = (target_vpd_min + target_vpd_max) / 2  # Fix for correct target VPD
@@ -251,6 +251,12 @@ async def adjust_conditions(target_vpd_min, target_vpd_max, vpd_leaf, vpd_air, h
     vpd_min = round(target_vpd_min - tolerance, 2)
     vpd_max = round(target_vpd_max + tolerance, 2)
 
+    # **Set max allowed humidity based on grow stage**
+    grow_stage = state.get("grow_stage", "vegetative")  # Default to vegetative if unknown
+    max_humidity_limits = {"propagation": 70, "vegetative": 55, "flowering": 50}
+    max_humidity = max_humidity_limits.get(grow_stage, 55)  # Default to vegetative if missing
+
+    print(f"🔍 Grow Stage: {grow_stage} | Max Humidity Allowed: {max_humidity}%")
     print("🔍 Debug: Current State - Exhaust:", state["exhaust"])
     print("🔍 Debug: Current State - Humidifier:", state["humidifier"])
     print("🔍 Debug: Current State - Dehumidifier:", state["dehumidifier"])
@@ -259,42 +265,55 @@ async def adjust_conditions(target_vpd_min, target_vpd_max, vpd_leaf, vpd_air, h
     humidifier_change = False
     dehumidifier_change = False
     exhaust_change = False
+    print(air_temp)
+    print(state["exhaust"])
+    # **Ensure the exhaust stays ON if air temperature > 25.5°C**
+    if air_temp > 25.5 and not state["exhaust"]:
+        print("🔥 High Temperature Detected (>25.5°C): Keeping Exhaust ON...")
+        await toggle_exhaust(True)
+        state["exhaust"] = True
+        exhaust_change = True
 
-    # **Ensure exhaust is OFF if humidity is too low**
-    if humidity < required_humidity and state["exhaust"]:
+    # **Ensure exhaust is OFF if humidity is too low, unless temp > 25.5°C**
+    if humidity < required_humidity and state["exhaust"] and air_temp <= 25.5:
         print("❗ Humidity too low! Turning OFF exhaust to prevent excess drying...")
         await toggle_exhaust(False)
         state["exhaust"] = False  # Ensure state sync
         exhaust_change = True
 
+    # **Prevent humidity from exceeding the max allowed for the grow stage**
+    if required_humidity > max_humidity:
+        print(f"⚠️ Required humidity ({required_humidity}%) exceeds stage max ({max_humidity}%). Adjusting target...")
+        required_humidity = max_humidity  # Cap at the grow stage limit
+
     # **Adjust humidifier, dehumidifier, and exhaust based on required humidity**
-    if required_humidity > humidity and not state["humidifier"]:
-        print("💦 Gradual Transition: Increasing humidity - Turning ON humidifier...")
+    if required_humidity > humidity and not state["humidifier"] and humidity < max_humidity:
+        print("💦 Increasing humidity - Turning ON humidifier...")
         await toggle_humidifier(True)
         state["humidifier"] = True
         humidifier_change = True
 
-    elif required_humidity < humidity and state["humidifier"]:
-        print("🌬️ Gradual Transition: Reducing humidity - Turning OFF humidifier...")
+    elif (required_humidity < humidity or humidity >= max_humidity) and state["humidifier"]:
+        print("🌬️ Reducing humidity - Turning OFF humidifier...")
         await toggle_humidifier(False)
         state["humidifier"] = False
         humidifier_change = True
 
-    # **Dehumidifier logic: Activate if humidity is too high**
-    if humidity > required_humidity + 3 and not state["dehumidifier"]:  # 3% buffer to avoid frequent toggles
+    # **Dehumidifier logic: Activate if humidity is above stage limit**
+    if humidity > max_humidity and not state["dehumidifier"]:
         print("🏜️ Humidity TOO HIGH: Turning ON dehumidifier...")
         await toggle_dehumidifier(True)
         state["dehumidifier"] = True
         dehumidifier_change = True
 
-    elif humidity <= required_humidity and state["dehumidifier"]:
+    elif humidity <= max_humidity and state["dehumidifier"]:
         print("✅ Humidity in range: Turning OFF dehumidifier...")
         await toggle_dehumidifier(False)
         state["dehumidifier"] = False
         dehumidifier_change = True
 
     # **Adjust based on VPD levels**
-    if vpd_leaf > vpd_max and state["exhaust"]:
+    if vpd_leaf > vpd_max and state["exhaust"] and air_temp <= 25.5:
         print("🔥 VPD TOO HIGH: Turning OFF exhaust and ON humidifier...")
         await toggle_exhaust(False)
         await toggle_humidifier(True)

@@ -8,24 +8,28 @@ from tapo_controller import get_device_status, toggle_humidifier, toggle_dehumid
 from utils.calculate import calculate_vpd
 from state import state  
 from flask_cors import CORS
+from utils.config import action_map, VPD_TARGET, VPD_MODES
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
-exhaust_model = joblib.load("model/exhaust_model.pkl")
-humidifier_model = joblib.load("model/humidifier_model.pkl")
-dehumidifier_model = joblib.load("model/dehumidifier_model.pkl")
-anomaly_detector = joblib.load("model/anomaly_detector.pkl")
-q_table = joblib.load("model/q_learning.pkl")
+try:
+    Q_table = joblib.load("model/q_learning.pkl")
+    print("✅ Q-table loaded successfully!")
+except FileNotFoundError:
+    print("❌ Error: Q-table not found! Reinforcement learning is disabled.")
+    Q_table = {}
 
-# Store selected VPD range
-VPD_TARGET = {"min": None, "max": None}
-VPD_MODES = {
-    "propagation": (0.4, 0.8),
-    "vegetative": (1.1, 1.2),
-    "flowering": (1.2, 1.4),
-}
-
+# **Load trained ML models**
+try:
+    exhaust_model = joblib.load("model/exhaust_model.pkl")
+    humidifier_model = joblib.load("model/humidifier_model.pkl")
+    dehumidifier_model = joblib.load("model/dehumidifier_model.pkl")
+    anomaly_detector = joblib.load("model/anomaly_detector.pkl")
+    print("✅ All models loaded successfully!")
+except FileNotFoundError as e:
+    print(f"❌ Error loading models: {e}")
+    
 FASTAPI_URL = "http://127.0.0.1:8001"  # FastAPI server URL
 
 @app.route('/predict', methods=['POST'])
@@ -252,54 +256,80 @@ def get_prediction_data():
         return jsonify({"error": "Server error"}), 500
     
 
+def ensure_feature_format(sensor_data):
+    """Ensure the input data has the correct feature format for ML models."""
+    required_features = ["temperature", "leaf_temperature", "humidity", "vpd_air", "vpd_leaf", "exhaust", "humidifier", "dehumidifier"]
+    
+    # Fill missing features with default values (assume devices are off)
+    for feature in required_features:
+        if feature not in sensor_data:
+            sensor_data[feature] = 0  # Assume False/0 if missing
+
+    return np.array([[
+        sensor_data["temperature"], sensor_data["leaf_temperature"],
+        sensor_data["humidity"], sensor_data["vpd_air"], sensor_data["vpd_leaf"],
+        sensor_data["exhaust"], sensor_data["humidifier"], sensor_data["dehumidifier"]
+    ]])
+
+
+@app.route("/predict_action", methods=["POST"])
+def predict_action():
+    """Predict the best action using Q-learning."""
+    try:
+        data = request.json
+        state = (data["temperature"], data["humidity"], data["vpd_air"], data["vpd_leaf"])
+        
+        if Q_table:
+            action_index = np.argmax(Q_table.get(state, np.zeros(len(action_map))))
+            action = action_map[action_index]
+        else:
+            action = "error_no_q_table"
+
+        return jsonify({"recommended_action": action})
+
+    except Exception as e:
+        print(f"⚠️ Prediction Error: {e}")
+        return jsonify({"error": "Failed to process data"}), 500
+
+
+@app.route("/predict", methods=["POST"])
+def predict_device_states():
+    """Predict device states (on/off) using trained ML models."""
+    try:
+        sensor_data = request.json
+        formatted_data = ensure_feature_format(sensor_data)
+
+        # Predict device states
+        exhaust_prediction = exhaust_model.predict(formatted_data)[0]
+        humidifier_prediction = humidifier_model.predict(formatted_data)[0]
+        dehumidifier_prediction = dehumidifier_model.predict(formatted_data)[0]
+
+        return jsonify({
+            "exhaust": bool(exhaust_prediction),
+            "humidifier": bool(humidifier_prediction),
+            "dehumidifier": bool(dehumidifier_prediction),
+        })
+
+    except Exception as e:
+        print(f"⚠️ Prediction API Error: {e}")
+        return jsonify({"error": "Failed to predict device states"}), 500
+
+
 @app.route("/detect_anomaly", methods=["POST"])
 def detect_anomaly():
-    """Detect anomalies based on incoming sensor data."""
+    """Detect anomalies in sensor data using Isolation Forest."""
     try:
-        data = request.get_json()
+        sensor_data = request.json
+        formatted_data = ensure_feature_format(sensor_data)
 
-        # Ensure all required fields exist
-        required_fields = ["temperature", "leaf_temperature", "humidity", "vpd_air", "vpd_leaf"]
-        missing_fields = [field for field in required_fields if field not in data]
+        anomaly_score = anomaly_detector.predict(formatted_data)[0]
+        is_anomaly = anomaly_score == -1  # Isolation Forest returns -1 for anomalies
 
-        if missing_fields:
-            return jsonify({"error": f"Missing fields: {', '.join(missing_fields)}"}), 400
-
-        # Convert data to DataFrame (ensure correct feature names)
-        df = pd.DataFrame([data], columns=required_fields)
-
-        # Make prediction (IsolationForest returns -1 for anomalies, 1 for normal)
-        anomaly_score = anomaly_detector.predict(df)
-
-        # Convert NumPy bool to Python bool for JSON serialization
-        anomaly_detected = bool(anomaly_score[0] == -1)
-
-        return jsonify({"anomaly_detected": anomaly_detected})
+        return jsonify({"anomaly_detected": is_anomaly})
 
     except Exception as e:
         print(f"⚠️ Anomaly Detection Error: {e}")
-        return jsonify({"error": "Server error"}), 500
-
-
-@app.route("/optimize_control", methods=["POST"])
-def optimize_control():
-    """Predicts best device actions using RL model."""
-    try:
-        data = request.get_json()
-        state = (data["temperature"], data["humidity"], data["vpd_air"], data["vpd_leaf"])
-
-        # Select best action
-        if state in q_table:
-            best_action = np.argmax(q_table[state])
-        else:
-            best_action = np.random.choice([0, 1, 2, 3, 4, 5])  # Random action if state is new
-
-        action_map = ["exhaust_on", "exhaust_off", "humidifier_on", "humidifier_off", "dehumidifier_on", "dehumidifier_off"]
-        return jsonify({"best_action": action_map[best_action]})
-
-    except Exception as e:
-        print(f"⚠️ RL Control Error: {e}")
-        return jsonify({"error": "Server error"}), 500
+        return jsonify({"error": "Anomaly detection failed"}), 500
     
     
 if __name__ == '__main__':
