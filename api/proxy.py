@@ -1,65 +1,44 @@
+import os
+import sys
 from flask import Flask, request, jsonify, request, Response
 import requests
 import joblib
 import asyncio
 import pandas as pd
 import numpy as np
-from tapo_controller import get_device_status, toggle_humidifier, toggle_dehumidifier, get_dehumidifier_info_json, toggle_exhaust, get_sensor_data, get_exhaust_info_json, get_humidifier_info_json
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from api.tapo_controller import get_device_info_json, get_sensor_data, get_device_info
+from api.device_status import get_device_status
+from api.actions import toggle_dehumidifier, toggle_exhaust, toggle_humidifier
+from api.state import state  
+from api.models import models, load_models
 from utils.calculate import calculate_vpd
-from state import state  
 from flask_cors import CORS
-from utils.config import action_map, VPD_TARGET, VPD_MODES
+from config.settings import action_map, DEVICE_MAP, MAX_HUMIDITY_LEVELS, VPD_TARGET, VPD_MODES, FASTAPI_URL, PROXY_URL, KPA_TOLERANCE, LEAF_TEMP_OFFSET
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
-try:
-    Q_table = joblib.load("model/q_learning.pkl")
-    print("✅ Q-table loaded successfully!")
-except FileNotFoundError:
-    print("❌ Error: Q-table not found! Reinforcement learning is disabled.")
-    Q_table = {}
 
-# **Load trained ML models**
-try:
-    exhaust_model = joblib.load("model/exhaust_model.pkl")
-    humidifier_model = joblib.load("model/humidifier_model.pkl")
-    dehumidifier_model = joblib.load("model/dehumidifier_model.pkl")
-    anomaly_detector = joblib.load("model/anomaly_detector.pkl")
-    print("✅ All models loaded successfully!")
-except FileNotFoundError as e:
-    print(f"❌ Error loading models: {e}")
-    
-FASTAPI_URL = "http://127.0.0.1:8001"  # FastAPI server URL
+load_models()
 
-@app.route('/predict', methods=['POST'])
-def predict():
+@app.route('/config-settings', methods=['GET'])
+async def config_settings():
+    """Fetch config settings."""
     try:
-        data = request.json
-
-        # ✅ Ensure all expected fields exist
-        required_fields = ["temperature", "leaf_temperature", "humidity", "vpd_air", "vpd_leaf"]
-        for field in required_fields:
-            if field not in data:
-                return jsonify({"error": f"Missing required field: {field}"}), 400
-
-        # Extract values from request
-        features = np.array([[data["temperature"], data["leaf_temperature"], data["humidity"], data["vpd_air"], data["vpd_leaf"]]])
-
-        # Make Predictions
-        exhaust_prediction = exhaust_model.predict(features)[0]
-        humidifier_prediction = humidifier_model.predict(features)[0]
-        dehumidifier_prediction = dehumidifier_model.predict(features)[0]
-
         return jsonify({
-            "exhaust": bool(exhaust_prediction),
-            "humidifier": bool(humidifier_prediction),
-            "dehumidifier": bool(dehumidifier_prediction),
+            "KPA_TOLERANCE": KPA_TOLERANCE, 
+            "LEAF_TEMP_OFFSET": LEAF_TEMP_OFFSET,
+            "VPD_TARGET": VPD_TARGET,
+            "VPD_MODES": VPD_MODES,
+            "action_map": action_map,
+            "MAX_HUMIDITY_LEVELS": MAX_HUMIDITY_LEVELS,
+            "DEVICE_MAP": DEVICE_MAP
         })
-
-    except Exception as e:
-        print(f"⚠️ Prediction error: {e}")
-        return jsonify({"error": "Server error during prediction"}), 500
+    except requests.RequestException as e:
+        return jsonify({"error": str(e)}), 500
     
 
 @app.route('/adjust_conditions', methods=['POST'])
@@ -67,7 +46,7 @@ async def adjust_conditions():
     """Automatically adjust devices based on ML predictions."""
     try:
         sensor_data = await get_sensor_data()  # Get real-time data from Tapo devices
-        prediction = requests.post("http://127.0.0.1:5000/predict", json=sensor_data).json()
+        prediction = requests.post(f"{PROXY_URL}/predict", json=sensor_data).json()
 
         # Toggle devices based on predictions
         await toggle_exhaust(prediction["exhaust"])
@@ -92,13 +71,14 @@ def get_vpd_data():
         return Response(response.iter_content(), content_type=response.headers['Content-Type'])
     except requests.RequestException as e:
         return jsonify({"error": str(e)}), 500
+    
 
 # Flask API Route to Get Device Status
 @app.route('/device_status', methods=['GET'])
 def device_status():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    device_info = loop.run_until_complete(get_device_status())
+    device_info = loop.run_until_complete(get_device_status("sensor_hub"))
     return jsonify(device_info.to_dict())
 
 
@@ -166,12 +146,13 @@ def exhaust_info_json():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
-    response = loop.run_until_complete(get_exhaust_info_json())  # Correct async function call
+    response = loop.run_until_complete(get_device_info_json("exhaust")) 
     
     if isinstance(response, dict):  # Ensure response is a dict
         return jsonify(response)  # Return as JSON without .to_dict()
     else:
         return jsonify(response.to_dict())  # Keep for compatibility in case it's another object
+    
 
 # Flask API Route to Get all the properties returned from the Tapo API as JSON
 @app.route('/humidifier_info_json', methods=['GET'])
@@ -180,12 +161,13 @@ def humidifier_info_json():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
-    response = loop.run_until_complete(get_humidifier_info_json())  # Correct async function call
+    response = loop.run_until_complete(get_device_info_json("humidifier"))  # Correct async function call
     
     if isinstance(response, dict):  # Ensure response is a dict
         return jsonify(response)  # Return as JSON without .to_dict()
     else:
         return jsonify(response.to_dict())  # Keep for compatibility in case it's another object
+    
 
 # Flask API Route to Get all the properties returned from the Tapo API as JSON
 @app.route('/dehumidifier_info_json', methods=['GET'])
@@ -194,12 +176,13 @@ def dehumidifier_info_json():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
-    response = loop.run_until_complete(get_dehumidifier_info_json())  # Correct async function call
+    response = loop.run_until_complete(get_device_info_json("dehumidifier"))  # Correct async function call
     
     if isinstance(response, dict):  # Ensure response is a dict
         return jsonify(response)  # Return as JSON without .to_dict()
     else:
         return jsonify(response.to_dict())  # Keep for compatibility in case it's another object
+    
 
 # Flask API Route to Check Current State
 @app.route('/device_state', methods=['GET'])
@@ -219,6 +202,7 @@ def set_vpd_target():
     VPD_TARGET["min"], VPD_TARGET["max"] = VPD_MODES[stage]
     return jsonify({"message": f"VPD set to {VPD_TARGET['min']} - {VPD_TARGET['max']} kPa"})
 
+
 @app.route("/get_vpd_target", methods=["GET"])
 def get_vpd_target():
     """Returns the current VPD target stage."""
@@ -229,6 +213,7 @@ def get_vpd_target():
     except Exception as e:
         print(f"⚠️ Error fetching VPD target: {e}")
         return jsonify({"error": "Server error"}), 500
+    
 
 @app.route("/get_prediction_data", methods=["GET"])
 def get_prediction_data():
@@ -271,38 +256,62 @@ def ensure_feature_format(sensor_data):
         sensor_data["exhaust"], sensor_data["humidifier"], sensor_data["dehumidifier"]
     ]])
 
-
 @app.route("/predict_action", methods=["POST"])
 def predict_action():
-    """Predict the best action using Q-learning."""
     try:
         data = request.json
-        state = (data["temperature"], data["humidity"], data["vpd_air"], data["vpd_leaf"])
         
-        if Q_table:
-            action_index = np.argmax(Q_table.get(state, np.zeros(len(action_map))))
-            action = action_map[action_index]
-        else:
-            action = "error_no_q_table"
+        # ✅ Ensure state is a tuple of floats
+        input_state = (
+            float(data["temperature"]),
+            float(data["humidity"]),
+            float(data["vpd_air"]),
+            float(data["vpd_leaf"])
+        )
 
-        return jsonify({"recommended_action": action})
+        # 🔹 Check if Q_table is loaded
+        global Q_table
+        if "Q_table" not in globals():
+            Q_table = joblib.load("../model/q_learning.pkl")
+            print("✅ Q-learning table loaded!")
+
+        # 🔹 Ensure state exists in Q-table
+        if input_state not in Q_table:
+            print(f"⚠️ Warning: Unseen state {input_state}, taking random action")
+            action = np.random.choice(list(range(6)))  # Random action
+        else:
+            action = np.argmax(Q_table[input_state])
+
+        action_name = list(action_map.keys())[action]
+        return jsonify({"predicted_action": action_name})
 
     except Exception as e:
-        print(f"⚠️ Prediction Error: {e}")
-        return jsonify({"error": "Failed to process data"}), 500
+        print(f"⚠️ Prediction API error: {e}")
+        return jsonify({"error": "Action prediction failed"}), 500
 
 
-@app.route("/predict", methods=["POST"])
-def predict_device_states():
-    """Predict device states (on/off) using trained ML models."""
+@app.route('/predict', methods=['POST'])
+def predict():
     try:
-        sensor_data = request.json
-        formatted_data = ensure_feature_format(sensor_data)
+        data = request.json
 
-        # Predict device states
-        exhaust_prediction = exhaust_model.predict(formatted_data)[0]
-        humidifier_prediction = humidifier_model.predict(formatted_data)[0]
-        dehumidifier_prediction = dehumidifier_model.predict(formatted_data)[0]
+        # ✅ Ensure all expected fields exist
+        required_fields = ["temperature", "leaf_temperature", "humidity", "vpd_air", "vpd_leaf"]
+        for field in required_fields:
+            if field not in data:
+                return jsonify({"error": f"Missing required field: {field}"}), 400
+
+        # Extract values from request
+        features = np.array([[data["temperature"], data["leaf_temperature"], data["humidity"], data["vpd_air"], data["vpd_leaf"]]])
+
+        # ✅ Ensure models are loaded before accessing them
+        if models["exhaust_model"] is None or models["humidifier_model"] is None or models["dehumidifier_model"] is None:
+            return jsonify({"error": "One or more ML models are not loaded"}), 500
+
+        # Make Predictions
+        exhaust_prediction = models["exhaust_model"].predict(features)[0]
+        humidifier_prediction = models["humidifier_model"].predict(features)[0]
+        dehumidifier_prediction = models["dehumidifier_model"].predict(features)[0]
 
         return jsonify({
             "exhaust": bool(exhaust_prediction),
@@ -311,26 +320,42 @@ def predict_device_states():
         })
 
     except Exception as e:
-        print(f"⚠️ Prediction API Error: {e}")
-        return jsonify({"error": "Failed to predict device states"}), 500
+        print(f"⚠️ Prediction error: {e}")
+        return jsonify({"error": "Server error during prediction"}), 500
 
 
 @app.route("/detect_anomaly", methods=["POST"])
 def detect_anomaly():
-    """Detect anomalies in sensor data using Isolation Forest."""
     try:
-        sensor_data = request.json
-        formatted_data = ensure_feature_format(sensor_data)
+        data = request.json
+        print(f"🔍 Received data for anomaly detection: {data}")  # ✅ Debugging
 
-        anomaly_score = anomaly_detector.predict(formatted_data)[0]
-        is_anomaly = anomaly_score == -1  # Isolation Forest returns -1 for anomalies
+        # Define expected feature names (ensure correct order)
+        expected_features = [
+            "temperature", "leaf_temperature", "humidity",
+            "vpd_air", "vpd_leaf", "exhaust", "humidifier", "dehumidifier"
+        ]
 
-        return jsonify({"anomaly_detected": is_anomaly})
+        # Fill missing features with default values
+        for feature in expected_features:
+            if feature not in data:
+                print(f"⚠️ Missing feature: {feature} (setting to 0)")
+                data[feature] = 0  # Default value (0 = device off)
+
+        # Ensure the order of features matches the trained model
+        input_features = pd.DataFrame([[data[feature] for feature in expected_features]], columns=expected_features)
+
+        print(f"✅ Processed features for anomaly detection: {input_features.to_dict(orient='records')}")
+
+        # Predict anomaly
+        anomaly_score = models["anomaly_detector"].decision_function(input_features)
+        is_anomaly = anomaly_score < -0.5  # Threshold
+
+        return jsonify({"anomaly_detected": bool(is_anomaly)})
 
     except Exception as e:
-        print(f"⚠️ Anomaly Detection Error: {e}")
+        print(f"⚠️ Anomaly Detection API error: {e}")
         return jsonify({"error": "Anomaly detection failed"}), 500
-    
-    
+
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000)

@@ -2,89 +2,49 @@ import sys
 import os
 import asyncio
 import time
-from tapo import ApiClient
 from tapo.responses import T31XResult
-from dotenv import load_dotenv
 
 # Ensure the utils and api modules can be found
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from api.state import state 
+from config.settings import KPA_TOLERANCE, DEVICE_MAP, MAX_HUMIDITY_LEVELS, AIR_EXCHANGE_SETTINGS, HUB_IP, LEAF_TEMP_OFFSET
 from utils.calculate import calculate_required_humidity
+from api.actions import toggle_dehumidifier, toggle_exhaust, toggle_humidifier
+from api.tapo_client import get_tapo_client
 
-load_dotenv()
+async def get_device_info(device_name):
+    """Fetch device info dynamically based on device name."""
+    if device_name not in DEVICE_MAP:
+        raise ValueError(f"❌ Invalid device name: {device_name}")
 
-# Load credentials
-TAPO_USERNAME = os.getenv("TAPO_USERNAME")
-TAPO_PASSWORD = os.getenv("TAPO_PASSWORD")
-HUB_IP = os.getenv("HUB_IP")
-HUMIDIFIER_IP = os.getenv("HUMIDIFIER_IP")
-EXHAUST_IP = os.getenv("EXHAUST_IP")
-DEHUMIDIFIER_IP = os.getenv("DEHUMIDIFIER_IP")
+    device_ip = DEVICE_MAP[device_name]["ip"]
+    device_type = DEVICE_MAP[device_name]["type"]
 
-KPA_TOLERANCE = float(os.getenv("KPA_TOLERANCE", 0.1))
-
-async def get_device_status():
-    """Fetch the device status from the Tapo sensor hub."""
     client = await get_tapo_client()
-    device = await client.h100(HUB_IP)
+    device = await getattr(client, device_type)(device_ip)
+
     return await device.get_device_info()
 
-async def get_exhaust_status():
-    """Fetch the device status from the Tapo Plug."""
-    client = await get_tapo_client()
-    device = await client.p100(EXHAUST_IP)
-    return await device.get_device_info()
+async def get_device_info_json(device_name):
+    """Fetch device info in JSON format."""
+    if device_name not in DEVICE_MAP:
+        raise ValueError(f"❌ Invalid device name: {device_name}")
 
-async def get_humidifier_status():
-    """Fetch the device status from the Tapo Plug."""
-    client = await get_tapo_client()
-    device = await client.p115(HUMIDIFIER_IP)
-    return await device.get_device_info()
+    device_ip = DEVICE_MAP[device_name]["ip"]
+    device_type = DEVICE_MAP[device_name]["type"]
 
-async def get_dehumidifier_status():
-    """Fetch the device status from the Tapo Plug."""
     client = await get_tapo_client()
-    device = await client.p115(DEHUMIDIFIER_IP)
-    return await device.get_device_info()
+    device = await getattr(client, device_type)(device_ip)
 
-async def get_exhaust_info_json():
-    """Returns *device info* as json.
-    It contains all the properties returned from the Tapo API.
-    """
-    client = await get_tapo_client()
-    device = await client.h100(EXHAUST_IP)
-    return await device.get_device_info_json()    
-
-async def get_humidifier_info_json():
-    """Returns *device info* as json.
-    It contains all the properties returned from the Tapo API.
-    """
-    client = await get_tapo_client()
-    device = await client.p115(HUMIDIFIER_IP)
-    return await device.get_device_info_json()    
-
-async def get_dehumidifier_info_json():
-    """Returns *device info* as json.
-    It contains all the properties returned from the Tapo API.
-    """
-    client = await get_tapo_client()
-    device = await client.p115(DEHUMIDIFIER_IP)
-    return await device.get_device_info_json()   
+    return await device.get_device_info_json()
 
 async def air_exchange_cycle(last_air_exchange, target_vpd_min, target_vpd_max):
     """
     Adjusts air exchange duration & interval dynamically based on selected VPD stage.
     Ensures the exhaust fan runs periodically for fresh air supply.
     """
-
-    # Define air exchange settings for each stage
-    AIR_EXCHANGE_SETTINGS = {
-        "propagation": {"interval": 45 * 60, "duration": 2 * 60},  # Every 45 min, 2 min duration
-        "vegetative": {"interval": 30 * 60, "duration": 4 * 60},  # Every 30 min, 4 min duration
-        "flowering": {"interval": 20 * 60, "duration": 6 * 60},  # Every 20 min, 6 min duration
-    }
-
+    
     # Determine which VPD mode is active
     if target_vpd_max <= 0.8:
         stage = "propagation"
@@ -105,114 +65,18 @@ async def air_exchange_cycle(last_air_exchange, target_vpd_min, target_vpd_max):
 
         if not state["exhaust"]:  # Only turn ON if it's OFF
             await toggle_exhaust(True)
+            state["everything_ok"] = False
 
         await asyncio.sleep(AIR_EXCHANGE_DURATION)  # Keep exhaust ON for the duration
 
         print("✅ **Air Exchange Complete: Restoring previous state.**")
         await toggle_exhaust(False)  # Turn OFF exhaust after the cycle
+        state["everything_ok"] = True
 
         return time.time()  # Update last air exchange timestamp
 
     return last_air_exchange  # No change if air exchange was not needed
 
-async def energy_saving_mode(vpd_leaf, vpd_air, target_vpd_min, target_vpd_max):
-    """Turns off humidifier/exhaust if VPD is already within range to save energy."""
-    if target_vpd_min <= vpd_leaf <= target_vpd_max and target_vpd_min <= vpd_air <= target_vpd_max:
-        if state["humidifier"] or state["exhaust"]:  # Only act if devices are ON
-            print("⚡ Energy-Saving Mode: VPD is stable. Turning OFF humidifier & exhaust.")
-            await toggle_humidifier(False)
-            await toggle_exhaust(False)
-
-async def get_tapo_client():
-    """Initialize and return a Tapo API Client."""
-    return ApiClient(TAPO_USERNAME, TAPO_PASSWORD)
-
-async def smooth_transition(from_device, to_device, duration=10):
-    """Gradual transition between exhaust and humidifier for smoother humidity adjustments."""
-    print(f"⚙️ **Starting smooth transition: {from_device} → {to_device}** (Duration: {duration}s)")
-    await asyncio.sleep(duration // 2)  # Halfway delay before switching fully
-    if from_device == "humidifier":
-        await toggle_humidifier(False)
-        await asyncio.sleep(duration // 2)  # Allow overlap before turning exhaust on
-        await toggle_exhaust(True)
-    else:
-        await toggle_exhaust(False)
-        await asyncio.sleep(duration // 2)  # Allow overlap before turning humidifier on
-        await toggle_humidifier(True)
-    print(f"✅ **Transition complete: {to_device} is now active.**")
-
-async def toggle_humidifier(state_requested):
-    """Turn the humidifier ON or OFF based on state (True=ON, False=OFF)."""
-    if state["humidifier"] == state_requested:
-        print(f"ℹ️ Humidifier already {'ON' if state_requested else 'OFF'}. No action taken.")
-        return {"message": f"Humidifier is already {'ON' if state_requested else 'OFF'}"}
-
-    print(f"🔄 Changing humidifier state to {'ON' if state_requested else 'OFF'}...")
-
-    client = await get_tapo_client()
-    device = await client.p115(HUMIDIFIER_IP)
-
-    try:
-        if state_requested:
-            await device.on()
-            state["humidifier"] = True
-            print("✅ Humidifier turned ON")
-        else:
-            await device.off()
-            state["humidifier"] = False
-            print("✅ Humidifier turned OFF")
-
-    except Exception as e:
-        print(f"❌ Error: Failed to toggle humidifier - {str(e)}")
-
-async def toggle_exhaust(state_requested):
-    """Turn the exhaust fan ON or OFF based on state (True=ON, False=OFF)."""
-    
-    if state["exhaust"] == state_requested:
-        print(f"ℹ️ Exhaust already {'ON' if state_requested else 'OFF'}. No action taken.")
-        return
-
-    client = await get_tapo_client()
-    device = await client.p100(EXHAUST_IP)
-
-    try:
-        if state_requested:
-            print("🔄 Changing exhaust state to ON...")
-            await device.on()
-            state["exhaust"] = True  # ✅ Force state sync
-            print("✅ Exhaust turned ON")
-        else:
-            print("🔄 Changing exhaust state to OFF...")
-            await device.off()
-            state["exhaust"] = False  # ✅ Force state sync
-            print("✅ Exhaust turned OFF")
-    except Exception as e:
-        print(f"⚠️ Failed to change exhaust state: {str(e)}")
-        
-async def toggle_dehumidifier(state_requested):
-    """Turn the dehumidifer fan ON or OFF based on state (True=ON, False=OFF)."""
-    
-    if state["dehumidifer"] == state_requested:
-        print(f"ℹ️ Dehumidifer already {'ON' if state_requested else 'OFF'}. No action taken.")
-        return
-
-    client = await get_tapo_client()
-    device = await client.p115(DEHUMIDIFIER_IP)
-
-    try:
-        if state_requested:
-            print("🔄 Changing dehumidifer state to ON...")
-            await device.on()
-            state["dehumidifer"] = True  # ✅ Force state sync
-            print("✅ Dehumidifer turned ON")
-        else:
-            print("🔄 Changing dehumidifer state to OFF...")
-            await device.off()
-            state["dehumidifer"] = False  # ✅ Force state sync
-            print("✅ Dehumidifer turned OFF")
-    except Exception as e:
-        print(f"⚠️ Failed to change dehumidifer state: {str(e)}")        
-    
 async def get_sensor_data(retries=3, delay=2):
     """Fetch temperature & humidity from the Tapo sensor with retries."""
     client = await get_tapo_client()
@@ -225,7 +89,7 @@ async def get_sensor_data(retries=3, delay=2):
             for child in child_device_list:
                 if isinstance(child, T31XResult):
                     air_temp = round(child.current_temperature or 0, 1)
-                    leaf_temp = round(max(air_temp - 1.0, 0), 1)  # Estimate leaf temperature
+                    leaf_temp = round(max(air_temp - LEAF_TEMP_OFFSET, 0), 1)  # Estimate leaf temperature
                     humidity = round(child.current_humidity or 0, 1)
                     return air_temp, leaf_temp, humidity  # ✅ Successfully retrieved values
 
@@ -253,7 +117,7 @@ async def adjust_conditions(target_vpd_min, target_vpd_max, vpd_leaf, vpd_air, h
 
     # **Set max allowed humidity based on grow stage**
     grow_stage = state.get("grow_stage", "vegetative")  # Default to vegetative if unknown
-    max_humidity_limits = {"propagation": 70, "vegetative": 55, "flowering": 50}
+    max_humidity_limits = MAX_HUMIDITY_LEVELS
     max_humidity = max_humidity_limits.get(grow_stage, 55)  # Default to vegetative if missing
 
     print(f"🔍 Grow Stage: {grow_stage} | Max Humidity Allowed: {max_humidity}%")
@@ -265,20 +129,13 @@ async def adjust_conditions(target_vpd_min, target_vpd_max, vpd_leaf, vpd_air, h
     humidifier_change = False
     dehumidifier_change = False
     exhaust_change = False
-    print(air_temp)
-    print(state["exhaust"])
+
     # **Ensure the exhaust stays ON if air temperature > 25.5°C**
     if air_temp > 25.5 and not state["exhaust"]:
         print("🔥 High Temperature Detected (>25.5°C): Keeping Exhaust ON...")
         await toggle_exhaust(True)
         state["exhaust"] = True
-        exhaust_change = True
-
-    # **Ensure exhaust is OFF if humidity is too low, unless temp > 25.5°C**
-    if humidity < required_humidity and state["exhaust"] and air_temp <= 25.5:
-        print("❗ Humidity too low! Turning OFF exhaust to prevent excess drying...")
-        await toggle_exhaust(False)
-        state["exhaust"] = False  # Ensure state sync
+        state["everything_ok"] = False
         exhaust_change = True
 
     # **Prevent humidity from exceeding the max allowed for the grow stage**
@@ -286,33 +143,46 @@ async def adjust_conditions(target_vpd_min, target_vpd_max, vpd_leaf, vpd_air, h
         print(f"⚠️ Required humidity ({required_humidity}%) exceeds stage max ({max_humidity}%). Adjusting target...")
         required_humidity = max_humidity  # Cap at the grow stage limit
 
-    # **Adjust humidifier, dehumidifier, and exhaust based on required humidity**
-    if required_humidity > humidity and not state["humidifier"] and humidity < max_humidity:
-        print("💦 Increasing humidity - Turning ON humidifier...")
-        await toggle_humidifier(True)
-        state["humidifier"] = True
-        humidifier_change = True
+    # **If humidity is already too high, turn OFF humidifier and turn ON dehumidifier**
+    if humidity > max_humidity:
+        if state["humidifier"]:
+            print("🚫 Turning OFF Humidifier: Humidity exceeded max limit!")
+            await toggle_humidifier(False)
+            state["humidifier"] = False
+            humidifier_change = True
+            state["everything_ok"] = True
 
-    elif (required_humidity < humidity or humidity >= max_humidity) and state["humidifier"]:
-        print("🌬️ Reducing humidity - Turning OFF humidifier...")
-        await toggle_humidifier(False)
-        state["humidifier"] = False
-        humidifier_change = True
+        if not state["dehumidifier"]:
+            print("🏜️ Humidity TOO HIGH: Turning ON dehumidifier...")
+            await toggle_dehumidifier(True)
+            state["dehumidifier"] = True
+            dehumidifier_change = True
+            state["everything_ok"] = False
+    else:
+        # **Increase humidity if below required range and humidifier is OFF**
+        if required_humidity > humidity and not state["humidifier"]:
+            print("💦 Increasing humidity - Turning ON humidifier...")
+            await toggle_humidifier(True)
+            state["humidifier"] = True
+            humidifier_change = True
+            state["everything_ok"] = False
 
-    # **Dehumidifier logic: Activate if humidity is above stage limit**
-    if humidity > max_humidity and not state["dehumidifier"]:
-        print("🏜️ Humidity TOO HIGH: Turning ON dehumidifier...")
-        await toggle_dehumidifier(True)
-        state["dehumidifier"] = True
-        dehumidifier_change = True
+        elif required_humidity < humidity and state["humidifier"]:
+            print("🌬️ Reducing humidity - Turning OFF humidifier...")
+            await toggle_humidifier(False)
+            state["humidifier"] = False
+            state["everything_ok"] = True
+            humidifier_change = True
 
-    elif humidity <= max_humidity and state["dehumidifier"]:
-        print("✅ Humidity in range: Turning OFF dehumidifier...")
-        await toggle_dehumidifier(False)
-        state["dehumidifier"] = False
-        dehumidifier_change = True
+        # **Turn OFF dehumidifier if humidity is back to normal**
+        if humidity <= max_humidity and state["dehumidifier"]:
+            print("✅ Humidity in range: Turning OFF dehumidifier...")
+            await toggle_dehumidifier(False)
+            state["dehumidifier"] = False
+            state["everything_ok"] = True
+            dehumidifier_change = True
 
-    # **Adjust based on VPD levels**
+    # **Ensure the exhaust turns OFF only when it's not required**
     if vpd_leaf > vpd_max and state["exhaust"] and air_temp <= 25.5:
         print("🔥 VPD TOO HIGH: Turning OFF exhaust and ON humidifier...")
         await toggle_exhaust(False)
@@ -321,6 +191,7 @@ async def adjust_conditions(target_vpd_min, target_vpd_max, vpd_leaf, vpd_air, h
         state["humidifier"] = True
         exhaust_change = True
         humidifier_change = True
+        state["everything_ok"] = False
 
     elif vpd_leaf < vpd_min and not state["exhaust"]:
         print("💦 VPD TOO LOW: Turning ON exhaust and OFF humidifier...")
@@ -330,6 +201,7 @@ async def adjust_conditions(target_vpd_min, target_vpd_max, vpd_leaf, vpd_air, h
         state["exhaust"] = True
         exhaust_change = True
         humidifier_change = True
+        state["everything_ok"] = False
 
     # ✅ **Confirm adjustments only if changes happened**
     if humidifier_change or dehumidifier_change or exhaust_change:

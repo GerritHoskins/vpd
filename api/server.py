@@ -1,9 +1,12 @@
+import sys
+import os
 import asyncio
 import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-# Import real sensor data functions
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from api.tapo_controller import get_sensor_data
 from utils.calculate import calculate_vpd
 
