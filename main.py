@@ -11,7 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from utils.calculate import calculate_vpd
 from utils.logs import log_to_csv, log_to_json
-from api.tapo_controller import toggle_exhaust, toggle_dehumidifier, toggle_humidifier, get_sensor_data, adjust_conditions, air_exchange_cycle
+from api.tapo_controller import get_device_info_json, toggle_exhaust, toggle_dehumidifier, toggle_humidifier, get_sensor_data, adjust_conditions, air_exchange_cycle
 from model.train_rl_agent import choose_best_action
 from api.device_status import  get_device_status
 from config.settings import action_map, MAX_HUMIDITY_LEVELS, BASE_URL, KPA_TOLERANCE, PROXY_URL
@@ -53,10 +53,8 @@ async def start_anomaly_detection():
     except requests.RequestException as e:
         print(f"❌ Error: Failed to connect to anomaly detection API - {e}")
         return  # Stop processing if the anomaly API fails
-
-async def monitor_vpd(target_vpd_min, target_vpd_max):
-    """Continuously monitor VPD and adjust devices."""
     
+async def syncDeviceStati():     
     # Set initial status of exhaust, humidifier, and dehumidifier
     humidifier_on = await get_device_status("humidifier")
     state["humidifier"] = getattr(humidifier_on, "device_on", False)
@@ -66,7 +64,9 @@ async def monitor_vpd(target_vpd_min, target_vpd_max):
 
     dehumidifier_on = await get_device_status("dehumidifier")
     state["dehumidifier"] = getattr(dehumidifier_on, "device_on", False)
-    
+
+async def monitor_vpd(target_vpd_min, target_vpd_max):
+    """Continuously monitor VPD and adjust devices."""
     last_air_exchange = time.time()
     timestamp = time.time()
 
@@ -77,6 +77,7 @@ async def monitor_vpd(target_vpd_min, target_vpd_max):
     print(f"✅ Monitoring started with Target VPD: {target_vpd_min} - {target_vpd_max} kPa (±{KPA_TOLERANCE} tolerance)")
 
     while True:
+        await syncDeviceStati()
         # **Get Sensor Data**
         air_temp, leaf_temp, humidity = await get_sensor_data()
         vpd_air, vpd_leaf = calculate_vpd(air_temp, leaf_temp, humidity)
@@ -116,9 +117,9 @@ async def monitor_vpd(target_vpd_min, target_vpd_max):
         await start_anomaly_detection()
 
 
-        # **Ensure exhaust stays ON if temperature is above 25.5°C**
-        if air_temp >= 25.5 and not state["exhaust"]:
-            print("🔥 High Temperature Detected (≥25.5°C): Keeping Exhaust ON...")
+        # **Ensure exhaust stays ON if temperature is above 26.0°C**
+        if air_temp >= 26.0 and not state["exhaust"]:
+            print("🔥 High Temperature Detected (≥26.0°C): Keeping Exhaust ON...")
             await toggle_exhaust(True)
             state["exhaust"] = True
             state["everything_ok"] = False

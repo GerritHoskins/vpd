@@ -130,9 +130,9 @@ async def adjust_conditions(target_vpd_min, target_vpd_max, vpd_leaf, vpd_air, h
     dehumidifier_change = False
     exhaust_change = False
 
-    # **Ensure the exhaust stays ON if air temperature > 25.5°C**
-    if air_temp > 25.5 and not state["exhaust"]:
-        print("🔥 High Temperature Detected (>25.5°C): Keeping Exhaust ON...")
+    # **Ensure the exhaust stays ON if air temperature > 26C**
+    if air_temp > 26.0 and not state["exhaust"]:
+        print("🔥 High Temperature Detected (>26.0°C): Keeping Exhaust ON...")
         await toggle_exhaust(True)
         state["exhaust"] = True
         state["everything_ok"] = False
@@ -183,7 +183,7 @@ async def adjust_conditions(target_vpd_min, target_vpd_max, vpd_leaf, vpd_air, h
             dehumidifier_change = True
 
     # **Ensure the exhaust turns OFF only when it's not required**
-    if vpd_leaf > vpd_max and state["exhaust"] and air_temp <= 25.5:
+    if vpd_leaf > vpd_max and state["exhaust"] and air_temp <= 26.0:
         print("🔥 VPD TOO HIGH: Turning OFF exhaust and ON humidifier...")
         await toggle_exhaust(False)
         await toggle_humidifier(True)
