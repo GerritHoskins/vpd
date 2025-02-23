@@ -1,17 +1,19 @@
+import os
 import pandas as pd
-import numpy as np
-from sklearn.ensemble import IsolationForest
 import joblib
+from sklearn.ensemble import IsolationForest
 
-# Load dataset
-try:
-    data = pd.read_csv("vpd_log.csv")
-    print("✅ Dataset loaded successfully!")
-except FileNotFoundError:
-    print("❌ Error: vpd_log.csv not found!")
+# ✅ Load dataset
+csv_file = "vpd_log.csv"
+if not os.path.exists(csv_file):
+    print(f"❌ Error: '{csv_file}' not found! Ensure it exists in the root directory.")
     exit()
 
-data.rename(columns={
+data = pd.read_csv(csv_file)
+print("✅ Dataset loaded successfully!")
+
+# ✅ Rename columns
+column_mapping = {
     "Air Temperature (°C)": "temperature",
     "Leaf Temperature (°C)": "leaf_temperature",
     "Humidity (%)": "humidity",
@@ -20,16 +22,21 @@ data.rename(columns={
     "Exhaust": "exhaust",
     "Humidifier": "humidifier",
     "Dehumidifier": "dehumidifier"
-}, inplace=True)
+}
+data.rename(columns=column_mapping, inplace=True)
 
-# Ensure all required columns exist (Fill missing columns with defaults)
-features = ['temperature', 'leaf_temperature', 'humidity', 'vpd_air', 'vpd_leaf', 'exhaust', 'humidifier', 'dehumidifier']
-X = data[features]
+# ✅ Ensure all required columns exist
+features = ["temperature", "leaf_temperature", "humidity", "vpd_air", "vpd_leaf", "exhaust", "humidifier", "dehumidifier"]
+data = data[features].fillna(0)  # Fill missing values with 0
 
-# Train Isolation Forest Model
+# ✅ Convert column names to strings
+data.columns = data.columns.astype(str)
+
+# ✅ Train model
 anomaly_detector = IsolationForest(contamination=0.05, random_state=42)
-anomaly_detector.fit(X)
+anomaly_detector.fit(data)
 
-# Save the model
+# ✅ Save model
+os.makedirs("model", exist_ok=True)
 joblib.dump(anomaly_detector, "model/anomaly_detector.pkl")
 print("✅ Anomaly Detection Model saved successfully!")

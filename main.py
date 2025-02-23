@@ -14,7 +14,45 @@ from utils.logs import log_to_csv, log_to_json
 from api.tapo_controller import toggle_exhaust, toggle_dehumidifier, toggle_humidifier, get_sensor_data, adjust_conditions, air_exchange_cycle
 from model.train_rl_agent import choose_best_action
 from api.device_status import  get_device_status
-from config.settings import action_map, MAX_HUMIDITY_LEVELS, BASE_URL, KPA_TOLERANCE
+from config.settings import action_map, MAX_HUMIDITY_LEVELS, BASE_URL, KPA_TOLERANCE, PROXY_URL
+
+async def start_anomaly_detection():
+    sensor_data = await get_sensor_data()
+    
+    # ✅ Ensure proper JSON structure before sending request
+    if not isinstance(sensor_data, dict):
+        print(f"❌ Error: Expected sensor data as a dictionary but received {type(sensor_data)}. Fixing format...")
+        sensor_data = {
+            "temperature": sensor_data[0] if len(sensor_data) > 0 else 0,
+            "leaf_temperature": sensor_data[1] if len(sensor_data) > 1 else 0,
+            "humidity": sensor_data[2] if len(sensor_data) > 2 else 0,
+            "vpd_air": 0,  # Default if missing
+            "vpd_leaf": 0,
+            "exhaust": 0,
+            "humidifier": 0,
+            "dehumidifier": 0
+        }
+    
+    print(f"🔍 Sending sensor data for anomaly detection: {sensor_data}")
+    
+    try:
+        # ✅ Make POST request for anomaly detection
+        response = requests.post(f"{PROXY_URL}/detect_anomaly", json=sensor_data)
+        anomaly_response = response.json()
+
+        print(f"🔍 Anomaly API Response: {anomaly_response}")  # Debugging output
+
+        # ✅ Ensure anomaly response is valid
+        if isinstance(anomaly_response, dict) and "anomaly_detected" in anomaly_response:
+            if anomaly_response["anomaly_detected"]:
+                print("🚨 Anomaly detected! Skipping adjustments.")
+                return  # Stop processing if an anomaly is detected
+        else:
+            print("⚠️ Unexpected anomaly response format:", anomaly_response)
+
+    except requests.RequestException as e:
+        print(f"❌ Error: Failed to connect to anomaly detection API - {e}")
+        return  # Stop processing if the anomaly API fails
 
 async def monitor_vpd(target_vpd_min, target_vpd_max):
     """Continuously monitor VPD and adjust devices."""
@@ -74,6 +112,9 @@ async def monitor_vpd(target_vpd_min, target_vpd_max):
         if recommended_action == "dehumidifier_off":
             await toggle_dehumidifier(False)
             state["dehumidifier"] = False """
+        
+        await start_anomaly_detection()
+
 
         # **Ensure exhaust stays ON if temperature is above 25.5°C**
         if air_temp >= 25.5 and not state["exhaust"]:

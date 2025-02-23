@@ -328,34 +328,56 @@ def predict():
 def detect_anomaly():
     try:
         data = request.json
-        print(f"🔍 Received data for anomaly detection: {data}")  # ✅ Debugging
+        print(f"🔍 Raw Received data: {data}")  # Debugging log
 
-        # Define expected feature names (ensure correct order)
-        expected_features = [
-            "temperature", "leaf_temperature", "humidity",
-            "vpd_air", "vpd_leaf", "exhaust", "humidifier", "dehumidifier"
-        ]
+        # ✅ Ensure data is a dictionary
+        if not isinstance(data, dict):
+            if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+                print("⚠️ Warning: Received a list, extracting first item...")
+                data = data[0]  # Convert list to dictionary
+            else:
+                print("❌ Error: Expected JSON dictionary but received something else.")
+                return jsonify({"error": "Invalid input format. Expected a JSON dictionary."}), 400
 
-        # Fill missing features with default values
-        for feature in expected_features:
-            if feature not in data:
-                print(f"⚠️ Missing feature: {feature} (setting to 0)")
-                data[feature] = 0  # Default value (0 = device off)
+        print(f"✅ Processed data for anomaly detection: {data}")
 
-        # Ensure the order of features matches the trained model
-        input_features = pd.DataFrame([[data[feature] for feature in expected_features]], columns=expected_features)
+        # ✅ Convert input to DataFrame
+        input_features = pd.DataFrame([data])
 
-        print(f"✅ Processed features for anomaly detection: {input_features.to_dict(orient='records')}")
+        # ✅ Define expected feature names
+        expected_features = ["temperature", "leaf_temperature", "humidity", "vpd_air", "vpd_leaf", "exhaust", "humidifier", "dehumidifier"]
 
-        # Predict anomaly
-        anomaly_score = models["anomaly_detector"].decision_function(input_features)
-        is_anomaly = anomaly_score < -0.5  # Threshold
+        # ✅ Fill missing features with default values (0)
+        for col in expected_features:
+            if col not in input_features.columns:
+                print(f"⚠️ Missing feature: {col}, filling with 0")
+                input_features[col] = 0  
+
+        # ✅ Ensure all feature names are strings
+        input_features.columns = input_features.columns.astype(str)
+
+        # ✅ Ensure column order matches model training format
+        input_features = input_features[expected_features]
+
+        print(f"✅ Final processed features: {input_features.to_dict(orient='records')}")
+
+        # ✅ Load model if not already loaded
+        global anomaly_detector
+        if "anomaly_detector" not in globals():
+            print("⚠️ Loading anomaly detection model...")
+            anomaly_detector = joblib.load("../model/anomaly_detector.pkl")
+
+        # ✅ Run anomaly detection
+        anomaly_score = anomaly_detector.decision_function(input_features)
+        is_anomaly = anomaly_score < -0.5  # Adjust threshold if needed
+
+        print(f"🚀 Anomaly Score: {anomaly_score}, Detected: {bool(is_anomaly)}")
 
         return jsonify({"anomaly_detected": bool(is_anomaly)})
 
     except Exception as e:
-        print(f"⚠️ Anomaly Detection API error: {e}")
-        return jsonify({"error": "Anomaly detection failed"}), 500
+        print(f"❌ ERROR in Anomaly Detection: {e}")  # Log full error
+        return jsonify({"error": f"Anomaly detection failed: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000)
