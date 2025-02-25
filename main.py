@@ -20,7 +20,7 @@ from api.tapo_controller import (
 from model.train_rl_agent import choose_best_action
 from api.device_status import get_device_status
 from api.state import state
-from config.settings import ACTION_MAP, MAX_HUMIDITY_LEVELS, BASE_URL, KPA_TOLERANCE, PROXY_URL, Q_TABLE_PATH
+from config.settings import ACTION_MAP, MAX_HUMIDITY_LEVELS, BASE_URL, MAX_AIR_TEMP, PROXY_URL, Q_TABLE_PATH
 from api.actions import is_override_active
 
 
