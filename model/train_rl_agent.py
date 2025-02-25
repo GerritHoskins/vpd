@@ -6,82 +6,94 @@ import joblib
 from collections import defaultdict
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from config.settings import action_map
+from config.settings import ACTION_MAP, MODEL_DIR, CSV_FILE
 
-# ✅ Ensure the 'model' directory exists
-MODEL_DIR = os.path.join(os.path.dirname(__file__), "../model")
-os.makedirs(MODEL_DIR, exist_ok=True)
 
-# ✅ Load dataset
-CSV_FILE = os.path.join(os.path.dirname(__file__), "../vpd_log.csv")
-if not os.path.exists(CSV_FILE):
-    print(f"❌ Error: '{CSV_FILE}' not found! Please ensure it exists in the root directory.")
-    exit()
+def ensure_directories():
+    """Ensure necessary directories exist."""
+    os.makedirs(MODEL_DIR, exist_ok=True)
 
-data = pd.read_csv(CSV_FILE)
-print("✅ Dataset loaded successfully!")
 
-# ✅ Rename columns to expected format
-column_mapping = {
-    "Air Temperature (°C)": "temperature",
-    "Leaf Temperature (°C)": "leaf_temperature",
-    "Humidity (%)": "humidity",
-    "Air VPD (kPa)": "vpd_air",
-    "Leaf VPD (kPa)": "vpd_leaf",
-    "Exhaust": "exhaust",
-    "Humidifier": "humidifier",
-    "Dehumidifier": "dehumidifier"
-}
-data.rename(columns=column_mapping, inplace=True)
+def load_dataset(csv_file):
+    """Load and validate dataset from CSV file."""
+    if not os.path.exists(csv_file):
+        print(f"❌ Error: '{csv_file}' not found! Please ensure it exists.")
+        exit()
 
-# ✅ Ensure all required columns exist (Fill missing with 0)
-required_columns = list(column_mapping.values())
-missing_cols = [col for col in required_columns if col not in data.columns]
+    data = pd.read_csv(csv_file)
+    print("✅ Dataset loaded successfully!")
+    return data
 
-if missing_cols:
-    print(f"⚠️ Warning: Missing columns {missing_cols}, filling with default values.")
-    for col in missing_cols:
-        data[col] = 0  # Default to 0
 
-# ✅ Initialize Q-table (state-action rewards) with proper tuple-based keys
-# ✅ Ensure states are stored as tuples of floats in Q-table
-Q_table = defaultdict(lambda: np.zeros(len(action_map), dtype=np.float32))
+def preprocess_data(data):
+    """Rename columns and handle missing columns."""
+    column_mapping = {
+        "Air Temperature (°C)": "temperature",
+        "Leaf Temperature (°C)": "leaf_temperature",
+        "Humidity (%)": "humidity",
+        "Air VPD (kPa)": "vpd_air",
+        "Leaf VPD (kPa)": "vpd_leaf",
+        "Exhaust": "exhaust",
+        "Humidifier": "humidifier",
+        "Dehumidifier": "dehumidifier"
+    }
 
-# ✅ Hyperparameters
-alpha = 0.1  # Learning rate
-gamma = 0.9  # Discount factor
-epsilon = 0.1  # Exploration rate
+    data.rename(columns=column_mapping, inplace=True)
 
-for _, row in data.iterrows():
-    state = (
-        float(row["temperature"]),
-        float(row["humidity"]),
-        float(row["vpd_air"]),
-        float(row["vpd_leaf"])
-    )
+    required_columns = list(column_mapping.values())
+    missing_cols = [col for col in required_columns if col not in data.columns]
 
-    action = np.random.choice(list(range(len(action_map))))  # ✅ Ensure action is an integer
-    reward = -abs(row["vpd_leaf"] - 1.4)  # Reward closer to 1.4 kPa
+    if missing_cols:
+        print(f"⚠️ Warning: Missing columns {missing_cols}, filling with zeros.")
+        for col in missing_cols:
+            data[col] = 0
 
-    # ✅ Convert state to tuple of floats before using in Q_table
+    return data
+
+
+def train_q_learning(data, alpha=0.1, gamma=0.9, epsilon=0.1):
+    """Train Q-learning model based on provided data."""
+    Q_table = defaultdict(lambda: np.zeros(len(ACTION_MAP), dtype=np.float32))
+
+    for _, row in data.iterrows():
+        state = tuple(float(row[col]) for col in ["humidity", "leaf_temperature", "temperature", "vpd_air", "vpd_leaf"])
+        action = np.random.choice(len(ACTION_MAP))
+        reward = -abs(row["vpd_leaf"] - 1.4)
+
+        best_next_action = np.argmax(Q_table[state])
+        Q_table[state][action] += alpha * (reward + gamma * Q_table[state][best_next_action] - Q_table[state][action])
+
+    return Q_table
+
+
+def save_model(Q_table, path):
+    """Save trained Q-table to file."""
+    Q_table_dict = {state: actions for state, actions in Q_table.items()}
+    joblib.dump(Q_table_dict, path)
+    print(f"✅ Reinforcement Learning Model saved successfully at {path}!")
+
+
+def choose_best_action(state, Q_table):
+    """Choose best action given the current state."""
     state = tuple(map(float, state))
-    
-    # ✅ Fix IndexError by using int(action) as index
-    best_next_action = np.argmax(Q_table[state])
-    Q_table[state][int(action)] += alpha * (reward + gamma * np.max(Q_table[state]) - Q_table[state][int(action)])
 
-# ✅ Save Q-table
-Q_table_dict = {tuple(map(float, key)): value for key, value in Q_table.items()}  # Ensure keys are tuples
-q_table_path = os.path.join(MODEL_DIR, "q_learning.pkl")
-joblib.dump(Q_table_dict, q_table_path)
-
-print(f"✅ Reinforcement Learning Model saved successfully at {q_table_path}!")
-
-def choose_best_action(state):
-    """Selects the best action for a given sensor state using Q-learning."""
-    state = tuple(map(float, state))  # Ensure proper format
     if state in Q_table:
-        return int(np.argmax(Q_table[state]))  # ✅ Ensure action is returned as an integer
+        best_action = int(np.argmax(Q_table[state]))
     else:
-        print("⚠️ Warning: Unseen state, taking random action")
-        return np.random.choice(len(action_map))  # If unknown, pick random action
+        print(f"⚠️ Warning: Unseen state {state}, selecting random action.")
+        best_action = np.random.choice(list(ACTION_MAP.keys()))
+
+    if best_action not in ACTION_MAP:
+        print(f"❌ Error: Invalid action {best_action}, defaulting to 0.")
+        best_action = 0
+
+    return best_action
+
+
+if __name__ == "__main__":
+    ensure_directories()
+    data = load_dataset(CSV_FILE)
+    data = preprocess_data(data)
+
+    Q_table = train_q_learning(data)
+    save_model(Q_table, os.path.join(MODEL_DIR, "q_learning.pkl"))

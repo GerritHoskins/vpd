@@ -1,8 +1,9 @@
 state = {
-    "humidifier": False,  # False = OFF, True = ON
-    "exhaust": False,      # False = OFF, True = ON
-    "dehumidifer" : False,
-    "grow_stage" : 'flowering',
-    "everything_ok" : False
+    "overrides": {}, 
+    "humidifier": False,
+    "exhaust": False,
+    "dehumidifier": False,
+    "everything_ok": True,
+    "grow_stage": "flowering" 
 }
 

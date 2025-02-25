@@ -1,180 +1,145 @@
+import joblib
 import os
 import sys
 import time
 import requests
 import asyncio
 from dotenv import load_dotenv
-import time
-from api.state import state
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from utils.calculate import calculate_vpd
-from utils.logs import log_to_csv, log_to_json
-from api.tapo_controller import get_device_info_json, toggle_exhaust, toggle_dehumidifier, toggle_humidifier, get_sensor_data, adjust_conditions, air_exchange_cycle
+from utils.logs import log_to_csv
+from api.tapo_controller import (
+    toggle_exhaust,
+    toggle_dehumidifier,
+    toggle_humidifier,
+    get_sensor_data,
+    air_exchange_cycle
+)
 from model.train_rl_agent import choose_best_action
-from api.device_status import  get_device_status
-from config.settings import action_map, MAX_HUMIDITY_LEVELS, BASE_URL, KPA_TOLERANCE, PROXY_URL
+from api.device_status import get_device_status
+from api.state import state
+from config.settings import ACTION_MAP, MAX_HUMIDITY_LEVELS, BASE_URL, KPA_TOLERANCE, PROXY_URL, Q_TABLE_PATH
+from api.actions import is_override_active
 
-async def start_anomaly_detection():
-    sensor_data = await get_sensor_data()
-    
-    # ✅ Ensure proper JSON structure before sending request
-    if not isinstance(sensor_data, dict):
-        print(f"❌ Error: Expected sensor data as a dictionary but received {type(sensor_data)}. Fixing format...")
-        sensor_data = {
-            "temperature": sensor_data[0] if len(sensor_data) > 0 else 0,
-            "leaf_temperature": sensor_data[1] if len(sensor_data) > 1 else 0,
-            "humidity": sensor_data[2] if len(sensor_data) > 2 else 0,
-            "vpd_air": 0,  # Default if missing
-            "vpd_leaf": 0,
-            "exhaust": 0,
-            "humidifier": 0,
-            "dehumidifier": 0
-        }
-    
-    print(f"🔍 Sending sensor data for anomaly detection: {sensor_data}")
-    
+
+def load_q_table():
+    if os.path.exists(Q_TABLE_PATH):
+        Q_table = joblib.load(Q_TABLE_PATH)
+        print("✅ Q-table loaded successfully.")
+        return Q_table
+    else:
+        print("❌ Error: Q-table file not found.")
+        exit()
+
+
+async def start_anomaly_detection(sensor_data):
     try:
-        # ✅ Make POST request for anomaly detection
         response = requests.post(f"{PROXY_URL}/detect_anomaly", json=sensor_data)
+        response.raise_for_status()
         anomaly_response = response.json()
 
-        print(f"🔍 Anomaly API Response: {anomaly_response}")  # Debugging output
-
-        # ✅ Ensure anomaly response is valid
-        if isinstance(anomaly_response, dict) and "anomaly_detected" in anomaly_response:
-            if anomaly_response["anomaly_detected"]:
-                print("🚨 Anomaly detected! Skipping adjustments.")
-                return  # Stop processing if an anomaly is detected
-        else:
-            print("⚠️ Unexpected anomaly response format:", anomaly_response)
+        if anomaly_response.get('anomaly_detected', False):
+            print("🚨 Anomaly detected! Skipping adjustments.")
+            return True
 
     except requests.RequestException as e:
-        print(f"❌ Error: Failed to connect to anomaly detection API - {e}")
-        return  # Stop processing if the anomaly API fails
-    
-async def syncDeviceStati():     
-    # Set initial status of exhaust, humidifier, and dehumidifier
-    humidifier_on = await get_device_status("humidifier")
-    state["humidifier"] = getattr(humidifier_on, "device_on", False)
+        print(f"❌ Error during anomaly detection request: {e}")
+        return True
 
-    exhaust_on = await get_device_status("exhaust")
-    state["exhaust"] = getattr(exhaust_on, "device_on", False)
+    return False
 
-    dehumidifier_on = await get_device_status("dehumidifier")
-    state["dehumidifier"] = getattr(dehumidifier_on, "device_on", False)
 
-async def monitor_vpd(target_vpd_min, target_vpd_max):
-    """Continuously monitor VPD and adjust devices."""
+async def sync_device_states(action_dict, humidity, max_humidity, air_temp):
+    if air_temp > MAX_AIR_TEMP:
+        action_dict["exhaust"] = True
+        print("🔥 Air temperature above 26°C: Ensuring exhaust is ON.")
+
+    for device, target_state in action_dict.items():
+        if device not in ["exhaust", "humidifier", "dehumidifier"]:
+            print(f"⚠️ Unknown device '{device}', skipping...")
+            continue
+
+        if is_override_active(device):
+            print(f"🚫 Skipping {device} due to override")
+            continue
+
+        if device == "humidifier" and (state.get("dehumidifier", False) or humidity >= max_humidity):
+            print("⚠️ Skipping humidifier ON due to active dehumidifier or humidity within optimal range.")
+            continue
+
+        if device == "dehumidifier" and (state.get("humidifier", False) or humidity <= max_humidity - 5):
+            print("⚠️ Skipping dehumidifier ON due to active humidifier or humidity within optimal range.")
+            continue
+
+        print(f"🔄 Toggling {device} {'ON' if target_state else 'OFF'}")
+
+        if device == "exhaust":
+            await toggle_exhaust(target_state)
+        elif device == "humidifier":
+            await toggle_humidifier(target_state)
+        elif device == "dehumidifier":
+            await toggle_dehumidifier(target_state)
+
+        state[device] = target_state
+
+
+def discretize_state(humidity, leaf_temp, air_temp, vpd_air, vpd_leaf):
+    return (
+        round(humidity / 5) * 5,
+        round(leaf_temp, 1),
+        round(air_temp, 1),
+        round(vpd_air, 1),
+        round(vpd_leaf, 1)
+    )
+
+async def monitor_vpd(target_vpd_min, target_vpd_max, Q_table):
     last_air_exchange = time.time()
-    timestamp = time.time()
 
-    # Convert VPD targets to float
-    target_vpd_min = float(target_vpd_min)
-    target_vpd_max = float(target_vpd_max)
-
-    print(f"✅ Monitoring started with Target VPD: {target_vpd_min} - {target_vpd_max} kPa (±{KPA_TOLERANCE} tolerance)")
+    print(f"✅ Monitoring VPD: {target_vpd_min}-{target_vpd_max} kPa")
 
     while True:
-        await syncDeviceStati()
-        # **Get Sensor Data**
         air_temp, leaf_temp, humidity = await get_sensor_data()
         vpd_air, vpd_leaf = calculate_vpd(air_temp, leaf_temp, humidity)
 
-        print("\n-------------------- 🌡️ Sensor Readings --------------------")
-        print(f"Air Temp: {air_temp}°C | Leaf Temp: {leaf_temp}°C | Humidity: {humidity}%")
-        print(f"Air VPD: {vpd_air} kPa | Leaf VPD: {vpd_leaf} kPa")
-        print("------------------------------------------------------------")
+        sensor_data = {
+            'temperature': air_temp,
+            'leaf_temperature': leaf_temp,
+            'humidity': humidity,
+            'vpd_air': vpd_air,
+            'vpd_leaf': vpd_leaf
+        }
 
-        # **Determine Grow Stage & Max Humidity Limit**
-        grow_stage = state.get("grow_stage", "vegetative")  # Default to vegetative
-        max_humidity_limits = MAX_HUMIDITY_LEVELS
-        max_humidity = max_humidity_limits.get(grow_stage, 60)  # Default to vegetative
+        if await start_anomaly_detection(sensor_data):
+            await asyncio.sleep(5)
+            continue
 
-        print(f"🔍 Grow Stage: {grow_stage} | Max Humidity Allowed: {max_humidity}%")
-        print("🔍 Debug: Current State - Exhaust:", state["exhaust"])
-        print("🔍 Debug: Current State - Humidifier:", state["humidifier"])
-        print("🔍 Debug: Current State - Dehumidifier:", state["dehumidifier"])
-        
-        # Predict best action
-        best_action = choose_best_action((air_temp, humidity, vpd_air, vpd_leaf))
-        recommended_action = action_map[best_action]
-        print("🚀 Setting Recommended Action:", recommended_action)
-        """ if recommended_action == "exhaust_on":
-            await toggle_exhaust(True)
-            state["exhaust"] = True
-        if recommended_action == "exhaust_off":
-            await toggle_exhaust(False)
-            state["exhaust"] = False
-        if recommended_action == "dehumidifier_on":
-            await toggle_dehumidifier(True)
-            state["dehumidifier"] = True
-        if recommended_action == "dehumidifier_off":
-            await toggle_dehumidifier(False)
-            state["dehumidifier"] = False """
-        
-        await start_anomaly_detection()
+        grow_stage = state.get("grow_stage", "vegetative")
+        max_humidity = MAX_HUMIDITY_LEVELS.get(grow_stage, 60)
 
+        state_tuple = discretize_state(humidity, leaf_temp, air_temp, vpd_air, vpd_leaf)
+        best_action = choose_best_action(state_tuple, Q_table)
+        recommended_action = ACTION_MAP.get(best_action, {})
 
-        # **Ensure exhaust stays ON if temperature is above 26.0°C**
-        if air_temp >= 26.0 and not state["exhaust"]:
-            print("🔥 High Temperature Detected (≥26.0°C): Keeping Exhaust ON...")
-            await toggle_exhaust(True)
-            state["exhaust"] = True
-            state["everything_ok"] = False
+        await sync_device_states(recommended_action, humidity, max_humidity, air_temp)
 
-        # **Check if humidity exceeds max limit and force dehumidifier ON**
-        if humidity > max_humidity and not state["dehumidifier"]:
-            print(f"🏜️ Humidity TOO HIGH ({humidity}%) - Turning ON dehumidifier...")
-            await toggle_dehumidifier(True)
-            state["dehumidifier"] = True
-            state["everything_ok"] = False
+        log_to_csv(time.time(), air_temp, leaf_temp, humidity, vpd_air, vpd_leaf,
+                   state["exhaust"], state["humidifier"], state["dehumidifier"])
 
-        # **Ensure humidifier does not exceed max humidity**
-        if state["humidifier"] and humidity >= max_humidity:
-            print(f"⚠️ Humidity at max limit ({max_humidity}%) - Turning OFF humidifier...")
-            await toggle_humidifier(False)
-            state["humidifier"] = False
-            state["everything_ok"] = True
-
-        # **Adjust Conditions Based on VPD**
-        if vpd_leaf < target_vpd_min:
-            print("🔵 VPD TOO LOW! Adjusting conditions... 💦")
-            await adjust_conditions(target_vpd_min, target_vpd_max, vpd_leaf, vpd_air, humidity)
-
-        elif vpd_leaf > target_vpd_max:
-            print("🔴 VPD TOO HIGH! Adjusting conditions... 🔥")
-            await adjust_conditions(target_vpd_min, target_vpd_max, vpd_leaf, vpd_air, humidity)
-
-        else:
-            print("✅ VPD is within range. No adjustment needed.")
-            #state["everything_ok"] = True
-            if state["everything_ok"]:
-                print("✅ Turning all devices off.")
-                await toggle_humidifier(False)
-                state["humidifier"] = False
-                await toggle_dehumidifier(False)
-                state["dehumidifier"] = False
-                await toggle_exhaust(False)
-                state["exhaust"] = False 
-            
-        # **Log Data**
-        log_to_csv(timestamp, air_temp, leaf_temp, humidity, vpd_air, vpd_leaf, state["exhaust"], state["humidifier"], state["dehumidifier"])
-
-        # **Call Air Exchange Cycle**
         last_air_exchange = await air_exchange_cycle(last_air_exchange, target_vpd_min, target_vpd_max)
 
-        print("🔄 Waiting 5 seconds before next check...\n")
+        print("🔄 Waiting 5 seconds...")
         await asyncio.sleep(5)
+
 
 if __name__ == "__main__":
     state["everything_ok"] = True
-    # Fetch target VPD values from API
     response = requests.get(f"{BASE_URL}/get_vpd_target").json()
-    
-    # Ensure they are floats before passing to `monitor_vpd`
+
     target_vpd_min = float(response.get("target_vpd_min", 1.2))
     target_vpd_max = float(response.get("target_vpd_max", 1.6))
 
-    asyncio.run(monitor_vpd(target_vpd_min, target_vpd_max))
+    Q_table = load_q_table()
+
+    asyncio.run(monitor_vpd(target_vpd_min, target_vpd_max, Q_table))
