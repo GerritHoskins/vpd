@@ -20,7 +20,7 @@ from api.tapo_controller import (
 from model.train_rl_agent import choose_best_action
 from api.device_status import get_device_status
 from api.state import state
-from config.settings import ACTION_MAP, MAX_HUMIDITY_LEVELS, BASE_URL, MAX_AIR_TEMP, PROXY_URL, Q_TABLE_PATH
+from config.settings import CONTROL_INTERVAL, ACTION_MAP, MAX_HUMIDITY_LEVELS, BASE_URL, MAX_AIR_TEMP, PROXY_URL, Q_TABLE_PATH
 from api.actions import is_override_active
 
 
@@ -129,8 +129,8 @@ async def monitor_vpd(target_vpd_min, target_vpd_max, Q_table):
 
         last_air_exchange = await air_exchange_cycle(last_air_exchange, target_vpd_min, target_vpd_max)
 
-        print("🔄 Waiting 5 seconds...")
-        await asyncio.sleep(5)
+        print(f"🔄 Waiting {CONTROL_INTERVAL} seconds...")
+        await asyncio.sleep(CONTROL_INTERVAL)
 
 
 if __name__ == "__main__":

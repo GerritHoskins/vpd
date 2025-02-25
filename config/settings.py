@@ -13,8 +13,9 @@ DEHUMIDIFIER_IP = os.getenv("DEHUMIDIFIER_IP")
 FASTAPI_URL = "http://0.0.0.0:8001"
 PROXY_URL = "http://127.0.0.1:5000"
 WS_URL = "ws://localhost:8000/ws/vpd"
- 
 BASE_URL = os.getenv('BASE_URL')
+
+CONTROL_INTERVAL = 30
 
 KPA_TOLERANCE = float(os.getenv("KPA_TOLERANCE", 0.1))
 LEAF_TEMP_OFFSET = 1.3

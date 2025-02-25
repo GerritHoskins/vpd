@@ -74,17 +74,14 @@ def save_model(Q_table, path):
 
 
 def choose_best_action(state, Q_table):
-    """Choose best action given the current state."""
+    """Choose best action given the current state without unseen actions."""
     state = tuple(map(float, state))
 
     if state in Q_table:
-        best_action = int(np.argmax(Q_table[state]))
+        sorted_actions = np.argsort(Q_table[state])[::-1]
+        best_action = next((a for a in sorted_actions if a in ACTION_MAP), 0)
     else:
-        print(f"⚠️ Warning: Unseen state {state}, selecting random action.")
-        best_action = np.random.choice(list(ACTION_MAP.keys()))
-
-    if best_action not in ACTION_MAP:
-        print(f"❌ Error: Invalid action {best_action}, defaulting to 0.")
+        print(f"⚠️ Warning: Unseen state {state}, selecting default action 0.")
         best_action = 0
 
     return best_action
