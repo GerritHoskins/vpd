@@ -103,20 +103,24 @@ async def monitor_vpd(target_vpd_min, target_vpd_max, Q_table):
     while True:
         air_temp, leaf_temp, humidity = await get_sensor_data()
         vpd_air, vpd_leaf = calculate_vpd(air_temp, leaf_temp, humidity)
-
         sensor_data = {
-            'temperature': air_temp,
-            'leaf_temperature': leaf_temp,
-            'humidity': humidity,
-            'vpd_air': vpd_air,
-            'vpd_leaf': vpd_leaf
+            "temperature": air_temp,
+            "leaf_temperature": leaf_temp,
+            "humidity": humidity,
+            "vpd_air": vpd_air,
+            "vpd_leaf": vpd_leaf,
+            "exhaust": state.get("exhaust", False),  
+            "humidifier": state.get("humidifier", False),
+            "dehumidifier": state.get("dehumidifier", False),
         }
+
+        print(f"✅ Processed data for anomaly detection: {sensor_data}")
 
         if await start_anomaly_detection(sensor_data):
             await asyncio.sleep(5)
             continue
 
-        grow_stage = state.get("grow_stage", "vegetative")  
+        grow_stage = state.get("grow_stage", "vegetative")
         max_humidity = MAX_HUMIDITY_LEVELS.get(grow_stage, 60)
 
         state_tuple = discretize_state(humidity, leaf_temp, air_temp, vpd_air, vpd_leaf)

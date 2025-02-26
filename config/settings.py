@@ -35,7 +35,8 @@ VPD_MODES = {
     "flowering": (1.2, 1.6),
 }
 
-MAX_HUMIDITY_LEVELS = {"propagation": 70, "vegetative": 60, "flowering": 55}
+MAX_HUMIDITY_LEVELS = {"propagation": 70, "vegetative": 60, "flowering": 50}
+MIN_HUMIDITY_LEVELS = {"propagation": 65, "vegetative": 55, "flowering": 40}
 MAX_AIR_TEMP = 26.0
 
 DEVICE_MAP = {
@@ -64,5 +65,10 @@ COLUMN_MAPPING = {
 
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "../model")
 Q_TABLE_PATH = os.path.join(MODEL_DIR, "q_learning.pkl")
+EXHAUST_MODEL_PATH = os.path.join(MODEL_DIR, "exhaust_model.pkl")
+HUMIDIFIER_MODEL_PATH = os.path.join(MODEL_DIR, "humidifier_model.pkl")
+DEHUMIDIFIER_MODEL_PATH = os.path.join(MODEL_DIR, "dehumidifier_model.pkl")
+ANOMALY_MODEL_PATH = os.path.join(MODEL_DIR, "anomaly_detector.pkl")
+
 
 CSV_FILE = os.path.join(os.path.dirname(__file__), "../vpd_log.csv")

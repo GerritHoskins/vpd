@@ -16,13 +16,18 @@ from api.state import state
 from api.models import models, load_models
 from utils.calculate import calculate_vpd
 from flask_cors import CORS
-from config.settings import ACTION_MAP, WS_URL, DEVICE_MAP, MAX_HUMIDITY_LEVELS, VPD_TARGET, VPD_MODES, FASTAPI_URL, PROXY_URL, KPA_TOLERANCE, LEAF_TEMP_OFFSET
+from config.settings import ACTION_MAP, ANOMALY_MODEL_PATH, Q_TABLE_PATH, EXHAUST_MODEL_PATH, HUMIDIFIER_MODEL_PATH, DEHUMIDIFIER_MODEL_PATH, WS_URL, DEVICE_MAP, MAX_HUMIDITY_LEVELS, VPD_TARGET, VPD_MODES, FASTAPI_URL, PROXY_URL, KPA_TOLERANCE, LEAF_TEMP_OFFSET
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
-
-load_models()
+Q_table = None
+models = {
+    "exhaust_model": None,
+    "humidifier_model": None,
+    "dehumidifier_model": None
+}
+anomaly_detector = None
 
 @app.route('/config-settings', methods=['GET'])
 async def config_settings():
@@ -212,15 +217,33 @@ def get_vpd_target():
     except Exception as e:
         print(f"⚠️ Error fetching VPD target: {e}")
         return jsonify({"error": "Server error"}), 500
-    
+ 
+ 
+def load_models():
+    """Load all required models into memory."""
+    global Q_table, models, anomaly_detector
+
+    if Q_table is None:
+        Q_table = joblib.load(Q_TABLE_PATH)
+        print("✅ Q-learning table loaded!")
+
+    if models["exhaust_model"] is None:
+        models["exhaust_model"] = joblib.load(EXHAUST_MODEL_PATH)
+        models["humidifier_model"] = joblib.load(HUMIDIFIER_MODEL_PATH)
+        models["dehumidifier_model"] = joblib.load(DEHUMIDIFIER_MODEL_PATH)
+        print("✅ ML models loaded!")
+
+    if anomaly_detector is None:
+        anomaly_detector = joblib.load(ANOMALY_MODEL_PATH)
+        print("✅ Anomaly detection model loaded!")
+
 
 @app.route("/get_prediction_data", methods=["GET"])
 def get_prediction_data():
     """Fetch real-time sensor data and calculate VPD."""
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        air_temp, leaf_temp, humidity = loop.run_until_complete(get_sensor_data())
+        data = asyncio.run(get_sensor_data())  # 🔹 Fix: Use asyncio.run() instead of new loop
+        air_temp, leaf_temp, humidity = data
 
         vpd_air, vpd_leaf = calculate_vpd(air_temp, leaf_temp, humidity)
 
@@ -235,28 +258,25 @@ def get_prediction_data():
     except Exception as e:
         print(f"⚠️ Error fetching prediction data: {e}")
         return jsonify({"error": "Server error"}), 500
-    
+
 
 def ensure_feature_format(sensor_data):
     """Ensure the input data has the correct feature format for ML models."""
     required_features = ["temperature", "leaf_temperature", "humidity", "vpd_air", "vpd_leaf", "exhaust", "humidifier", "dehumidifier"]
-    
-   
+
     for feature in required_features:
         if feature not in sensor_data:
-            sensor_data[feature] = 0 
+            sensor_data[feature] = False if feature in ["exhaust", "humidifier", "dehumidifier"] else 0  # 🔹 Fix: Use False for binary features
 
-    return np.array([[
-        sensor_data["temperature"], sensor_data["leaf_temperature"],
-        sensor_data["humidity"], sensor_data["vpd_air"], sensor_data["vpd_leaf"],
-        sensor_data["exhaust"], sensor_data["humidifier"], sensor_data["dehumidifier"]
-    ]])
+    return np.array([[sensor_data[f] for f in required_features]])
+
 
 @app.route("/predict_action", methods=["POST"])
 def predict_action():
     try:
+        load_models()  
         data = request.json
-        
+
         input_state = (
             float(data["humidity"]),
             float(data["leaf_temperature"]),
@@ -265,18 +285,13 @@ def predict_action():
             float(data["vpd_leaf"])
         )
 
-        global Q_table
-        if "Q_table" not in globals():
-            Q_table = joblib.load("../model/q_learning.pkl")
-            print("✅ Q-learning table loaded!")
-
         if input_state not in Q_table:
             print(f"⚠️ Warning: Unseen state {input_state}, taking random action")
-            action = np.random.choice(list(range(6)))  
+            action = np.random.choice(list(ACTION_MAP.keys()))
         else:
             action = np.argmax(Q_table[input_state])
 
-        action_name = list(ACTION_MAP.keys())[action]
+        action_name = ACTION_MAP[action] if action in ACTION_MAP else "unknown_action"  
         return jsonify({"predicted_action": action_name})
 
     except Exception as e:
@@ -284,21 +299,18 @@ def predict_action():
         return jsonify({"error": "Action prediction failed"}), 500
 
 
-@app.route('/predict', methods=['POST'])
+@app.route("/predict", methods=["POST"])
 def predict():
     try:
+        load_models()  
+
         data = request.json
-       
         required_fields = ["temperature", "leaf_temperature", "humidity", "vpd_air", "vpd_leaf"]
         for field in required_fields:
             if field not in data:
                 return jsonify({"error": f"Missing required field: {field}"}), 400
 
-       
-        features = np.array([[data["temperature"], data["leaf_temperature"], data["humidity"], data["vpd_air"], data["vpd_leaf"]]])
-
-        if models["exhaust_model"] is None or models["humidifier_model"] is None or models["dehumidifier_model"] is None:
-            return jsonify({"error": "One or more ML models are not loaded"}), 500
+        features = np.array([[data[f] for f in required_fields]])
 
         exhaust_prediction = models["exhaust_model"].predict(features)[0]
         humidifier_prediction = models["humidifier_model"].predict(features)[0]
@@ -318,46 +330,40 @@ def predict():
 @app.route("/detect_anomaly", methods=["POST"])
 def detect_anomaly():
     try:
+        load_models()  
+
         data = request.json
         if not isinstance(data, dict):
             if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
                 print("⚠️ Warning: Received a list, extracting first item...")
-                data = data[0] 
+                data = data[0]
             else:
                 print("❌ Error: Expected JSON dictionary but received something else.")
                 return jsonify({"error": "Invalid input format. Expected a JSON dictionary."}), 400
 
         print(f"✅ Processed data for anomaly detection: {data}")
 
-      
         input_features = pd.DataFrame([data])
         expected_features = ["temperature", "leaf_temperature", "humidity", "vpd_air", "vpd_leaf", "exhaust", "humidifier", "dehumidifier"]
 
         for col in expected_features:
             if col not in input_features.columns:
-                print(f"⚠️ Missing feature: {col}, filling with 0")
-                input_features[col] = 0  
-
-        input_features.columns = input_features.columns.astype(str)
+                print(f"⚠️ Missing feature: {col}, filling with False/0")
+                input_features[col] = False if col in ["exhaust", "humidifier", "dehumidifier"] else 0
 
         input_features = input_features[expected_features]
-        
-        global anomaly_detector
-        if "anomaly_detector" not in globals():
-            print("⚠️ Loading anomaly detection model...")
-            anomaly_detector = joblib.load("../model/anomaly_detector.pkl")
 
-     
         anomaly_score = anomaly_detector.decision_function(input_features)
-        is_anomaly = anomaly_score < -0.5  
-
+        is_anomaly = anomaly_score[0] < -0.5 
+        
         print(f"🚀 Anomaly Score: {anomaly_score}, Detected: {bool(is_anomaly)}")
-
         return jsonify({"anomaly_detected": bool(is_anomaly)})
 
     except Exception as e:
-        print(f"❌ ERROR in Anomaly Detection: {e}")  
-        return jsonify({"error": f"Anomaly detection failed: {str(e)}"}), 500
+        print(f"❌ ERROR in Anomaly Detection: {e}")
+        return jsonify({"error": "Anomaly detection failed"}), 500
 
-if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=5000)
+
+if __name__ == "__main__":
+    load_models() 
+    app.run(host="0.0.0.0", port=5000, debug=True)

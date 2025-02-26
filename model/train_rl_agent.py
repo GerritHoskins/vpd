@@ -7,7 +7,7 @@ from collections import defaultdict
 from scipy.spatial import KDTree
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from config.settings import MODEL_DIR, CSV_FILE, ACTION_MAP, MAX_HUMIDITY_LEVELS, VPD_MODES, COLUMN_MAPPING
+from config.settings import Q_TABLE_PATH, MODEL_DIR, CSV_FILE, ACTION_MAP, MAX_AIR_TEMP, MIN_HUMIDITY_LEVELS, MAX_HUMIDITY_LEVELS, VPD_MODES, COLUMN_MAPPING
 
 
 def ensure_directories():
@@ -78,9 +78,8 @@ def choose_best_action(state, Q_table, state_tree, known_states, grow_stage, tol
     """
     Choose the best action given the current state and growth stage.
 
-    - If state exists in Q-table, use the best action.
-    - If state is unseen, find the closest known state and use its best action.
-    - If no similar states exist, default to a calculated best action.
+    - Ensures humidifier and dehumidifier are mutually exclusive.
+    - Adjusts exhaust behavior based on temperature, humidity, and VPD.
     """
     state = tuple(map(float, state))
 
@@ -101,30 +100,35 @@ def choose_best_action(state, Q_table, state_tree, known_states, grow_stage, tol
     print(f"⚠️ Warning: Completely new state {state}, estimating best action.")
 
     humidity, leaf_temp, air_temp, vpd_air, vpd_leaf = state
-    max_humidity = MAX_HUMIDITY_LEVELS.get(grow_stage, 60)
-    vpd_min, vpd_max = VPD_MODES.get(grow_stage, (0.8, 1.2))
+    max_humidity = MAX_HUMIDITY_LEVELS.get(grow_stage, 50)
+    min_humidity = max_humidity - 5  # Maintain a 5% buffer
+    vpd_min, vpd_max = VPD_MODES.get(grow_stage, (1.2, 1.6))
 
-    actions = {}
+    actions = {"humidifier": False, "dehumidifier": False, "exhaust": False}
 
-    if air_temp > 26.0 or vpd_leaf > vpd_max:
-        actions["exhaust"] = True  # Turn ON exhaust
-        actions["dehumidifier"] = False
+    if air_temp > MAX_AIR_TEMP or vpd_leaf > vpd_max:
+        actions["exhaust"] = True  
     elif vpd_leaf < vpd_min:
-        actions["exhaust"] = False  # Turn OFF exhaust
+        actions["exhaust"] = False  
 
     if humidity > max_humidity:
-        actions["humidifier"] = False  # Turn OFF humidifier
-        actions["dehumidifier"] = True  # Turn ON dehumidifier
-        actions["exhaust"] = True
-    elif humidity < max_humidity - 5:  # Allow 5% buffer
-        actions["humidifier"] = True  # Turn ON humidifier
-        actions["dehumidifier"] = False  # Turn OFF dehumidifier
+        actions["humidifier"] = False  
+        actions["dehumidifier"] = True 
+        actions["exhaust"] = True  
+    elif humidity < min_humidity:
+        actions["dehumidifier"] = False  
+        actions["humidifier"] = True  
+    else:
+        actions["humidifier"] = False
+        actions["dehumidifier"] = False 
+    if actions["humidifier"] and actions["dehumidifier"]:
+        actions["humidifier"] = False  
 
-    for action, state in ACTION_MAP.items():
-        if state == actions:
+    for action, state_dict in ACTION_MAP.items():
+        if all(actions.get(k, False) == state_dict.get(k, False) for k in actions):
             return action
 
-    return 1  # Default to keeping exhaust OFF
+    return 1  # Default: Keep exhaust OFF
 
 
 if __name__ == "__main__":
@@ -133,6 +137,6 @@ if __name__ == "__main__":
     data = preprocess_data(data)
 
     Q_table = train_q_learning(data)
-    save_model(Q_table, os.path.join(MODEL_DIR, "q_learning.pkl"))
+    save_model(Q_table, Q_TABLE_PATH)
 
     state_tree, known_states = build_state_lookup(Q_table)
