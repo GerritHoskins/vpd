@@ -51,6 +51,17 @@ ACTION_MAP = {
     4: {"dehumidifier": True}, 5: {"dehumidifier": False}
 }
 
+COLUMN_MAPPING = {
+    "Air Temperature (°C)": "temperature",
+    "Leaf Temperature (°C)": "leaf_temperature",
+    "Humidity (%)": "humidity",
+    "Air VPD (kPa)": "vpd_air",
+    "Leaf VPD (kPa)": "vpd_leaf",
+    "Exhaust": "exhaust",
+    "Humidifier": "humidifier",
+    "Dehumidifier": "dehumidifier"
+}
+
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "../model")
 Q_TABLE_PATH = os.path.join(MODEL_DIR, "q_learning.pkl")
 

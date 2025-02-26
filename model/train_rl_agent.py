@@ -4,9 +4,10 @@ import numpy as np
 import pandas as pd
 import joblib
 from collections import defaultdict
+from scipy.spatial import KDTree
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from config.settings import ACTION_MAP, MODEL_DIR, CSV_FILE
+from config.settings import MODEL_DIR, CSV_FILE, ACTION_MAP, MAX_HUMIDITY_LEVELS, VPD_MODES, COLUMN_MAPPING
 
 
 def ensure_directories():
@@ -27,20 +28,10 @@ def load_dataset(csv_file):
 
 def preprocess_data(data):
     """Rename columns and handle missing columns."""
-    column_mapping = {
-        "Air Temperature (°C)": "temperature",
-        "Leaf Temperature (°C)": "leaf_temperature",
-        "Humidity (%)": "humidity",
-        "Air VPD (kPa)": "vpd_air",
-        "Leaf VPD (kPa)": "vpd_leaf",
-        "Exhaust": "exhaust",
-        "Humidifier": "humidifier",
-        "Dehumidifier": "dehumidifier"
-    }
+    
+    data.rename(columns=COLUMN_MAPPING, inplace=True)
 
-    data.rename(columns=column_mapping, inplace=True)
-
-    required_columns = list(column_mapping.values())
+    required_columns = list(COLUMN_MAPPING.values())
     missing_cols = [col for col in required_columns if col not in data.columns]
 
     if missing_cols:
@@ -73,18 +64,65 @@ def save_model(Q_table, path):
     print(f"✅ Reinforcement Learning Model saved successfully at {path}!")
 
 
-def choose_best_action(state, Q_table):
-    """Choose best action given the current state without unseen actions."""
+def build_state_lookup(Q_table):
+    """Build a KDTree for fast nearest-neighbor lookup."""
+    if not Q_table:
+        return None, []
+
+    known_states = np.array(list(Q_table.keys()))
+    tree = KDTree(known_states)
+    return tree, known_states
+
+
+def choose_best_action(state, Q_table, state_tree, known_states, grow_stage, tolerance=1.0):
+    """
+    Choose the best action given the current state and growth stage.
+
+    - If state exists in Q-table, use the best action.
+    - If state is unseen, find the closest known state and use its best action.
+    - If no similar states exist, default to a calculated best action.
+    """
     state = tuple(map(float, state))
 
     if state in Q_table:
         sorted_actions = np.argsort(Q_table[state])[::-1]
-        best_action = next((a for a in sorted_actions if a in ACTION_MAP), 0)
-    else:
-        print(f"⚠️ Warning: Unseen state {state}, selecting default action 0.")
-        best_action = 0
+        best_action = next((a for a in sorted_actions if a in ACTION_MAP), 1)
+        return best_action
 
-    return best_action
+    if state_tree is not None:
+        distance, index = state_tree.query(state)
+        if distance < tolerance:
+            closest_state = tuple(known_states[index])
+            sorted_actions = np.argsort(Q_table[closest_state])[::-1]
+            best_action = next((a for a in sorted_actions if a in ACTION_MAP), 1)
+            print(f"⚠️ Warning: Unseen state {state}, using closest match {closest_state} with action {best_action}.")
+            return best_action
+
+    print(f"⚠️ Warning: Completely new state {state}, estimating best action.")
+
+    humidity, leaf_temp, air_temp, vpd_air, vpd_leaf = state
+    max_humidity = MAX_HUMIDITY_LEVELS.get(grow_stage, 60)
+    vpd_min, vpd_max = VPD_MODES.get(grow_stage, (0.8, 1.2))
+
+    actions = {}
+
+    if air_temp > 26.0 or vpd_leaf > vpd_max:
+        actions["exhaust"] = True  # Turn ON exhaust
+    elif vpd_leaf < vpd_min:
+        actions["exhaust"] = False  # Turn OFF exhaust
+
+    if humidity > max_humidity:
+        actions["humidifier"] = False  # Turn OFF humidifier
+        actions["dehumidifier"] = True  # Turn ON dehumidifier
+    elif humidity < max_humidity - 5:  # Allow 5% buffer
+        actions["humidifier"] = True  # Turn ON humidifier
+        actions["dehumidifier"] = False  # Turn OFF dehumidifier
+
+    for action, state in ACTION_MAP.items():
+        if state == actions:
+            return action
+
+    return 1  # Default to keeping exhaust OFF
 
 
 if __name__ == "__main__":
@@ -94,3 +132,6 @@ if __name__ == "__main__":
 
     Q_table = train_q_learning(data)
     save_model(Q_table, os.path.join(MODEL_DIR, "q_learning.pkl"))
+
+    # Build nearest-state lookup for unseen state handling
+    state_tree, known_states = build_state_lookup(Q_table)

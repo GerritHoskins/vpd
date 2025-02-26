@@ -1,9 +1,14 @@
+import os
+import sys
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import joblib
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from config.settings import COLUMN_MAPPING
 
 try:
     data = pd.read_csv("vpd_log.csv")
@@ -12,38 +17,35 @@ except FileNotFoundError:
     print("❌ Error: vpd_log.csv not found!")
     exit()
 
-data.rename(columns={
-    "Air Temperature (°C)": "temperature",
-    "Leaf Temperature (°C)": "leaf_temperature",
-    "Humidity (%)": "humidity",
-    "Air VPD (kPa)": "vpd_air",
-    "Leaf VPD (kPa)": "vpd_leaf",
-    "Exhaust": "exhaust",
-    "Humidifier": "humidifier",
-    "Dehumidifier": "dehumidifier"
-}, inplace=True)
+data.rename(columns=COLUMN_MAPPING, inplace=True)
 
-expected_columns = ['temperature', 'leaf_temperature', 'humidity', 'vpd_air', 'vpd_leaf', 'exhaust', 'humidifier', 'dehumidifier']
+expected_columns = [
+    "temperature", "leaf_temperature", "humidity",
+    "vpd_air", "vpd_leaf", "exhaust", "humidifier", "dehumidifier"
+]
 
 for col in expected_columns:
     if col not in data.columns:
         print(f"⚠️ Warning: Missing column '{col}', filling with default values.")
-        data[col] = False if col in ['exhaust', 'humidifier', 'dehumidifier'] else np.nan
-
-data['exhaust'] = data['exhaust'].astype(bool)
-data['humidifier'] = data['humidifier'].astype(bool)
-data['dehumidifier'] = data['dehumidifier'].astype(bool)
+        if col in ["exhaust", "humidifier", "dehumidifier"]:
+            data[col] = False  
+        else:
+            data[col] = np.nan 
+            
+data["exhaust"] = data["exhaust"].astype(bool)
+data["humidifier"] = data["humidifier"].astype(bool)
+data["dehumidifier"] = data["dehumidifier"].astype(bool)
 
 print("✅ Dataset processed with all expected columns.")
 
-X = data[['temperature', 'leaf_temperature', 'humidity', 'vpd_air', 'vpd_leaf']]
-y_exhaust = data['exhaust'].astype(int)  
-y_humidifier = data['humidifier'].astype(int)
-y_dehumidifier = data['dehumidifier'].astype(int)
+X = data[["temperature", "leaf_temperature", "humidity", "vpd_air", "vpd_leaf"]]
+y_exhaust = data["exhaust"].astype(int)
+y_humidifier = data["humidifier"].astype(int)
+y_dehumidifier = data["dehumidifier"].astype(int)
 
 X_train, X_test, y_train_ex, y_test_ex = train_test_split(X, y_exhaust, test_size=0.2, random_state=42)
-X_train, X_test, y_train_hum, y_test_hum = train_test_split(X, y_humidifier, test_size=0.2, random_state=42)
-X_train, X_test, y_train_deh, y_test_deh = train_test_split(X, y_dehumidifier, test_size=0.2, random_state=42)
+y_train_hum, y_test_hum = train_test_split(y_humidifier, test_size=0.2, random_state=42)
+y_train_deh, y_test_deh = train_test_split(y_dehumidifier, test_size=0.2, random_state=42)
 
 exhaust_model = RandomForestClassifier(n_estimators=100, random_state=42)
 humidifier_model = RandomForestClassifier(n_estimators=100, random_state=42)
@@ -62,8 +64,11 @@ print("   ✅ Exhaust Model Accuracy:", accuracy_score(y_test_ex, y_pred_ex))
 print("   ✅ Humidifier Model Accuracy:", accuracy_score(y_test_hum, y_pred_hum))
 print("   ✅ Dehumidifier Model Accuracy:", accuracy_score(y_test_deh, y_pred_deh))
 
-joblib.dump(exhaust_model, "model/exhaust_model.pkl")
-joblib.dump(humidifier_model, "model/humidifier_model.pkl")
-joblib.dump(dehumidifier_model, "model/dehumidifier_model.pkl")
+model_dir = "model"
+os.makedirs(model_dir, exist_ok=True)
+
+joblib.dump(exhaust_model, os.path.join(model_dir, "exhaust_model.pkl"))
+joblib.dump(humidifier_model, os.path.join(model_dir, "humidifier_model.pkl"))
+joblib.dump(dehumidifier_model, os.path.join(model_dir, "dehumidifier_model.pkl"))
 
 print("✅ Models saved successfully!")

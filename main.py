@@ -4,7 +4,6 @@ import sys
 import time
 import requests
 import asyncio
-from dotenv import load_dotenv
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -17,8 +16,7 @@ from api.tapo_controller import (
     get_sensor_data,
     air_exchange_cycle
 )
-from model.train_rl_agent import choose_best_action
-from api.device_status import get_device_status
+from model.train_rl_agent import choose_best_action, build_state_lookup
 from api.state import state
 from config.settings import CONTROL_INTERVAL, ACTION_MAP, MAX_HUMIDITY_LEVELS, BASE_URL, MAX_AIR_TEMP, PROXY_URL, Q_TABLE_PATH
 from api.actions import is_override_active
@@ -93,11 +91,14 @@ def discretize_state(humidity, leaf_temp, air_temp, vpd_air, vpd_leaf):
         round(vpd_air, 1),
         round(vpd_leaf, 1)
     )
+    
 
 async def monitor_vpd(target_vpd_min, target_vpd_max, Q_table):
     last_air_exchange = time.time()
 
     print(f"✅ Monitoring VPD: {target_vpd_min}-{target_vpd_max} kPa")
+
+    state_tree, known_states = build_state_lookup(Q_table)
 
     while True:
         air_temp, leaf_temp, humidity = await get_sensor_data()
@@ -115,11 +116,13 @@ async def monitor_vpd(target_vpd_min, target_vpd_max, Q_table):
             await asyncio.sleep(5)
             continue
 
-        grow_stage = state.get("grow_stage", "vegetative")
+        grow_stage = state.get("grow_stage", "vegetative")  
         max_humidity = MAX_HUMIDITY_LEVELS.get(grow_stage, 60)
 
         state_tuple = discretize_state(humidity, leaf_temp, air_temp, vpd_air, vpd_leaf)
-        best_action = choose_best_action(state_tuple, Q_table)
+
+        best_action = choose_best_action(state_tuple, Q_table, state_tree, known_states, grow_stage)
+
         recommended_action = ACTION_MAP.get(best_action, {})
 
         await sync_device_states(recommended_action, humidity, max_humidity, air_temp)
