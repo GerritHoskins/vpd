@@ -108,12 +108,14 @@ def choose_best_action(state, Q_table, state_tree, known_states, grow_stage, tol
 
     if air_temp > 26.0 or vpd_leaf > vpd_max:
         actions["exhaust"] = True  # Turn ON exhaust
+        actions["dehumidifier"] = False
     elif vpd_leaf < vpd_min:
         actions["exhaust"] = False  # Turn OFF exhaust
 
     if humidity > max_humidity:
         actions["humidifier"] = False  # Turn OFF humidifier
         actions["dehumidifier"] = True  # Turn ON dehumidifier
+        actions["exhaust"] = True
     elif humidity < max_humidity - 5:  # Allow 5% buffer
         actions["humidifier"] = True  # Turn ON humidifier
         actions["dehumidifier"] = False  # Turn OFF dehumidifier
@@ -133,5 +135,4 @@ if __name__ == "__main__":
     Q_table = train_q_learning(data)
     save_model(Q_table, os.path.join(MODEL_DIR, "q_learning.pkl"))
 
-    # Build nearest-state lookup for unseen state handling
     state_tree, known_states = build_state_lookup(Q_table)
