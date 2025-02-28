@@ -120,8 +120,8 @@ async def monitor_vpd(target_vpd_min, target_vpd_max, Q_table):
             await asyncio.sleep(5)
             continue
 
-        grow_stage = state.get("grow_stage", "vegetative")
-        max_humidity = MAX_HUMIDITY_LEVELS.get(grow_stage, 60)
+        grow_stage = state.get("grow_stage", "flowering")
+        max_humidity = MAX_HUMIDITY_LEVELS.get(grow_stage, 50)
 
         state_tuple = discretize_state(humidity, leaf_temp, air_temp, vpd_air, vpd_leaf)
 

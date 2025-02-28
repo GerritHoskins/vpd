@@ -108,7 +108,7 @@ def choose_best_action(state, Q_table, state_tree, known_states, grow_stage, tol
 
     if air_temp > MAX_AIR_TEMP or vpd_leaf > vpd_max:
         actions["exhaust"] = True  
-    elif vpd_leaf < vpd_min:
+    elif vpd_leaf < vpd_min and grow_stage != "flowering":
         actions["exhaust"] = False  
 
     if humidity > max_humidity:
@@ -121,6 +121,8 @@ def choose_best_action(state, Q_table, state_tree, known_states, grow_stage, tol
     else:
         actions["humidifier"] = False
         actions["dehumidifier"] = False 
+        
+    # Prioritize dehumidifier in case of conflict
     if actions["humidifier"] and actions["dehumidifier"]:
         actions["humidifier"] = False  
 
