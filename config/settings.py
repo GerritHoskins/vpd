@@ -11,7 +11,7 @@ EXHAUST_IP = os.getenv("EXHAUST_IP")
 DEHUMIDIFIER_IP = os.getenv("DEHUMIDIFIER_IP")
 
 FASTAPI_URL = "http://0.0.0.0:8001"
-PROXY_URL = "http://127.0.0.1:5000"
+PROXY_URL = "http://localhost:5000"
 WS_URL = "ws://localhost:8000/ws/vpd"
 BASE_URL = os.getenv('BASE_URL')
 
