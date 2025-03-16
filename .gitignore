@@ -1,4 +1,6 @@
 .env
-.env.*
+env.production
+env.development
 /vpd_env
 */__pycache__
+venv/

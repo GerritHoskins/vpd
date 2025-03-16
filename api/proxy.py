@@ -6,6 +6,7 @@ import joblib
 import asyncio
 import pandas as pd
 import numpy as np
+import asyncio
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -47,26 +48,58 @@ async def config_settings():
         return jsonify({"error": str(e)}), 500
     
 
-@app.route('/adjust_conditions', methods=['POST'])
-async def adjust_conditions():
+@app.route('/api/adjust_conditions', methods=["OPTIONS", "POST"])
+def adjust_conditions():
     """Automatically adjust devices based on ML predictions."""
-    try:
-        sensor_data = await get_sensor_data()  
-        prediction = requests.post(f"{PROXY_URL}/predict", json=sensor_data).json()
 
-        await toggle_exhaust(prediction["exhaust"])
-        await toggle_humidifier(prediction["humidifier"])
-        await toggle_dehumidifier(prediction["dehumidifier"])
+    # Handle OPTIONS request
+    if request.method == 'OPTIONS':
+        response = jsonify({})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        return response, 204
+
+    # Handle POST request
+    try:
+        # Get JSON data and ensure required fields exist
+        sensor_data = request.get_json()
+        print(f"🔍 Received sensor data: {sensor_data}")  # Debugging log
+
+        # Ensure all required fields exist, provide defaults if missing
+        formatted_sensor_data = {
+            "temperature": sensor_data.get("temperature", 22.5),  # Default: 22.5
+            "humidity": sensor_data.get("humidity", 60),          # Default: 60%
+            "leaf_temperature": sensor_data.get("leaf_temperature", 20)  # Default: 20°C
+        }
+
+        print(f"📤 Sending to ML API: {formatted_sensor_data}")  # Debugging log
+
+        # Send request to ML prediction service
+        prediction_response = requests.post(f"{PROXY_URL}/predict", json=formatted_sensor_data)
+        prediction_response.raise_for_status()  # Raise error if response is not 200
+
+        prediction = prediction_response.json()
+        print(f"✅ ML Prediction Response: {prediction}")  # Debugging log
+
+        toggle_exhaust(prediction.get("exhaust", False))
+        toggle_humidifier(prediction.get("humidifier", False))
+        toggle_dehumidifier(prediction.get("dehumidifier", False))
 
         return jsonify({
             "message": "Conditions adjusted successfully",
             "state": prediction
-        })
-    
+        }), 200
+
+    except requests.exceptions.RequestException as req_err:
+        print(f"❌ Prediction API error: {req_err}")
+        return jsonify({"error": f"Failed to adjust conditions: {str(req_err)}"}), 500
+
     except Exception as e:
-        print(f"⚠️ Error adjusting conditions: {e}")
-        return jsonify({"error": "Failed to adjust conditions"}), 500
-    
+        print(f"⚠️ Unexpected error: {e}")
+        return jsonify({"error": f"Failed to adjust conditions: {str(e)}"}), 500
+
+
 
 @app.route("/vpd", methods=["GET"])
 def get_vpd_data():
