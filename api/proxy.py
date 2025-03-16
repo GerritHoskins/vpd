@@ -378,9 +378,16 @@ def predict():
         return jsonify({"error": "Server error during prediction"}), 500
 
 
-@app.route("/detect_anomaly", methods=["POST"])
+@app.route("/detect_anomaly", methods=["OPTIONS", "POST"])
 def detect_anomaly():
     try:
+        if request.method == 'OPTIONS':
+            response = jsonify({})
+            response.headers.add("Access-Control-Allow-Origin", "*")
+            response.headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            return response, 204
+        
         load_models()  
 
         data = request.json
