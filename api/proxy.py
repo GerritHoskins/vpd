@@ -48,7 +48,7 @@ async def config_settings():
         return jsonify({"error": str(e)}), 500
     
 
-@app.route('/api/adjust_conditions', methods=["OPTIONS", "POST"])
+@app.route('/adjust_conditions', methods=["OPTIONS", "POST"])
 def adjust_conditions():
     """Automatically adjust devices based on ML predictions."""
 
