@@ -52,6 +52,24 @@ async def config_settings():
 def adjust_conditions():
     """Automatically adjust devices based on ML predictions."""
 
+    # Handle OPTIONS request (CORS preflight)
+    if request.method == 'OPTIONS':
+        response = jsonify({})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        return response, 204
+
+    # Handle POST request
+    sensor_data = request.get_json()
+    print(f"🔍 Received sensor data: {sensor_data}")
+
+    return jsonify({"message": "Conditions adjusted", "data": sensor_data}), 200
+
+
+""" @app.route('/adjust_conditions', methods=["OPTIONS", "POST"])
+def adjust_conditions():
+
     # Handle OPTIONS request
     if request.method == 'OPTIONS':
         response = jsonify({})
@@ -98,7 +116,7 @@ def adjust_conditions():
     except Exception as e:
         print(f"⚠️ Unexpected error: {e}")
         return jsonify({"error": f"Failed to adjust conditions: {str(e)}"}), 500
-
+ """
 
 
 @app.route("/vpd", methods=["GET"])
