@@ -4,3 +4,4 @@ env.development
 /vpd_env
 */__pycache__
 venv/
+/config
