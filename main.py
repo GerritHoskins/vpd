@@ -83,15 +83,14 @@ async def sync_device_states(action_dict, humidity, max_humidity, air_temp):
         state[device] = target_state
 
 
-def discretize_state(humidity, leaf_temp, air_temp, vpd_air, vpd_leaf):
+def discretize_state(humidity, leaf_temp, air_temp, vpd_air):
     return (
         round(humidity / 5) * 5,
         round(leaf_temp, 1),
         round(air_temp, 1),
-        round(vpd_air, 1),
-        round(vpd_leaf, 1)
+        round(vpd_air, 1)
     )
-    
+
 
 async def monitor_vpd(target_vpd_min, target_vpd_max, Q_table):
     last_air_exchange = time.time()
@@ -123,13 +122,13 @@ async def monitor_vpd(target_vpd_min, target_vpd_max, Q_table):
         grow_stage = state.get("grow_stage", "flowering")
         max_humidity = MAX_HUMIDITY_LEVELS.get(grow_stage, 50)
 
-        state_tuple = discretize_state(humidity, leaf_temp, air_temp, vpd_air, vpd_leaf)
+        state_tuple = discretize_state(humidity, leaf_temp, air_temp, vpd_air)
 
         best_action = choose_best_action(state_tuple, Q_table, state_tree, known_states, grow_stage)
 
         recommended_action = ACTION_MAP.get(best_action, {})
 
-        await sync_device_states(recommended_action, humidity, max_humidity, air_temp)
+        #await sync_device_states(recommended_action, humidity, max_humidity, air_temp)
 
         log_to_csv(time.time(), air_temp, leaf_temp, humidity, vpd_air, vpd_leaf,
                    state["exhaust"], state["humidifier"], state["dehumidifier"])

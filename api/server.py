@@ -21,6 +21,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+async def root():
+    return {"message": "FastAPI is running on port 8001"}
+
+
 async def fetch_live_vpd_data():
     """Fetches real sensor data and calculates VPD dynamically."""
     while True:
@@ -58,3 +63,9 @@ async def websocket_vpd(websocket: WebSocket):
         print(f"⚠️ Unexpected WebSocket Error: {e}")
     finally:
         print("🔄 WebSocket Connection Closed Gracefully")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
