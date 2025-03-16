@@ -3,17 +3,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TAPO_USERNAME = 
-TAPO_PASSWORD =
-HUB_IP = 
-HUMIDIFIER_IP = 
-EXHAUST_IP = 
-DEHUMIDIFIER_IP =
+TAPO_USERNAME = "gerrit.hoskins@gmail.com" #os.getenv("TAPO_USERNAME")
+TAPO_PASSWORD = "99604752.Tapo" #os.getenv("TAPO_PASSWORD")
+HUB_IP = "192.168.178.68" #os.getenv("HUB_IP")
+HUMIDIFIER_IP = "192.168.178.85" #os.getenv("HUMIDIFIER_IP")
+EXHAUST_IP = "192.168.178.64" #os.getenv("EXHAUST_IP")
+DEHUMIDIFIER_IP = "192.168.178.95" #os.getenv("DEHUMIDIFIER_IP")
 
-FASTAPI_URL = 
-PROXY_URL = 
-WS_URL =
-BASE_URL =
+FASTAPI_URL = "http://0.0.0.0:8001"
+PROXY_URL = "http://localhost:5000"
+WS_URL = "ws://localhost:8000/ws/vpd"
+BASE_URL = "http://localhost:5000" #os.getenv('BASE_URL')
 
 CONTROL_INTERVAL = 30
 
