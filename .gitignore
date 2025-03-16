@@ -5,3 +5,4 @@ env.development
 */__pycache__
 venv/
 /config
+vpd_log.csv

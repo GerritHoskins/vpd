@@ -18,7 +18,7 @@ from api.tapo_controller import (
 )
 from model.train_rl_agent import choose_best_action, build_state_lookup
 from api.state import state
-from config.settings import CONTROL_INTERVAL, ACTION_MAP, MAX_HUMIDITY_LEVELS, BASE_URL, MAX_AIR_TEMP, PROXY_URL, Q_TABLE_PATH
+from config.settings import KPA_TOLERANCE, CONTROL_INTERVAL, ACTION_MAP, MAX_HUMIDITY_LEVELS, BASE_URL, MAX_AIR_TEMP, PROXY_URL, Q_TABLE_PATH
 from api.actions import is_override_active
 
 
@@ -83,12 +83,13 @@ async def sync_device_states(action_dict, humidity, max_humidity, air_temp):
         state[device] = target_state
 
 
-def discretize_state(humidity, leaf_temp, air_temp, vpd_air):
+def discretize_state(humidity, leaf_temp, air_temp, vpd_air, vpd_leaf):
     return (
         round(humidity / 5) * 5,
         round(leaf_temp, 1),
         round(air_temp, 1),
-        round(vpd_air, 1)
+        round(vpd_air, 1),
+        round(vpd_leaf, 1)
     )
 
 
@@ -122,9 +123,9 @@ async def monitor_vpd(target_vpd_min, target_vpd_max, Q_table):
         grow_stage = state.get("grow_stage", "flowering")
         max_humidity = MAX_HUMIDITY_LEVELS.get(grow_stage, 50)
 
-        state_tuple = discretize_state(humidity, leaf_temp, air_temp, vpd_air)
+        state_tuple = discretize_state(humidity, leaf_temp, air_temp, vpd_air, vpd_leaf)
 
-        best_action = choose_best_action(state_tuple, Q_table, state_tree, known_states, grow_stage)
+        best_action = choose_best_action(state_tuple, Q_table, state_tree, known_states, grow_stage, KPA_TOLERANCE)
 
         recommended_action = ACTION_MAP.get(best_action, {})
 

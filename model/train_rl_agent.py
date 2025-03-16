@@ -99,7 +99,7 @@ def choose_best_action(state, Q_table, state_tree, known_states, grow_stage, tol
 
     print(f"⚠️ Warning: Completely new state {state}, estimating best action.")
 
-    humidity, leaf_temp, air_temp, vpd_air = state
+    humidity, leaf_temp, air_temp, vpd_air, vpd_leaf = state
     max_humidity = MAX_HUMIDITY_LEVELS.get(grow_stage, 50)
     min_humidity = max_humidity - 5  # Maintain a 5% buffer
     vpd_min, vpd_max = VPD_MODES.get(grow_stage, (1.2, 1.6))
