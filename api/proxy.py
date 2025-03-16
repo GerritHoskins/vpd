@@ -322,18 +322,34 @@ def ensure_feature_format(sensor_data):
     return np.array([[sensor_data[f] for f in required_features]])
 
 
-@app.route("/predict_action", methods=["POST"])
+@app.route("/predict_action", methods=["OPTIONS", "POST"])
 def predict_action():
     try:
-        load_models()  
-        data = request.json
+        if request.method == 'OPTIONS':
+            response = jsonify({})
+            response.headers.add("Access-Control-Allow-Origin", "*")
+            response.headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            return response, 204
+        
+        load_models()
+
+        # Debugging: Print incoming request details
+        print(f"📥 Received headers: {request.headers}")
+        print(f"📥 Received raw data: {request.data}")
+        print(f"📥 Received JSON: {request.json}")
+
+        if not request.is_json:
+            return jsonify({"error": "Invalid content type, expecting JSON"}), 415
+
+        data = request.get_json()
 
         input_state = (
-            float(data["humidity"]),
-            float(data["leaf_temperature"]),
-            float(data["temperature"]),
-            float(data["vpd_air"]),
-            float(data["vpd_leaf"])
+            float(data.get("humidity", 0)),
+            float(data.get("leaf_temperature", 0)),
+            float(data.get("temperature", 0)),
+            float(data.get("vpd_air", 0)),
+            float(data.get("vpd_leaf", 0))
         )
 
         if input_state not in Q_table:
@@ -342,17 +358,25 @@ def predict_action():
         else:
             action = np.argmax(Q_table[input_state])
 
-        action_name = ACTION_MAP[action] if action in ACTION_MAP else "unknown_action"  
+        action_name = ACTION_MAP.get(action, "unknown_action")  
         return jsonify({"predicted_action": action_name})
 
     except Exception as e:
-        print(f"⚠️ Prediction API error: {e}")
-        return jsonify({"error": "Action prediction failed"}), 500
+        print(f"❌ Prediction API error: {e}")
+        return jsonify({"error": f"Action prediction failed: {str(e)}"}), 500
 
 
-@app.route("/predict", methods=["POST"])
+
+@app.route("/predict", methods=["OPTIONS", "POST"])
 def predict():
     try:
+        if request.method == 'OPTIONS':
+            response = jsonify({})
+            response.headers.add("Access-Control-Allow-Origin", "*")
+            response.headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            return response, 204
+        
         load_models()  
 
         data = request.json
