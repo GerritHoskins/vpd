@@ -134,7 +134,7 @@ async def monitor_vpd(target_vpd_min, target_vpd_max, Q_table):
         log_to_csv(time.time(), air_temp, leaf_temp, humidity, vpd_air, vpd_leaf,
                    state["exhaust"], state["humidifier"], state["dehumidifier"])
 
-        last_air_exchange = await air_exchange_cycle(last_air_exchange, target_vpd_min, target_vpd_max)
+        #last_air_exchange = await air_exchange_cycle(last_air_exchange, target_vpd_min, target_vpd_max)
 
         print(f"🔄 Waiting {CONTROL_INTERVAL} seconds...")
         await asyncio.sleep(CONTROL_INTERVAL)
