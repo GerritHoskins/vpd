@@ -10740,3 +10740,5 @@ Timestamp,Air Temperature (°C),Leaf Temperature (°C),Humidity (%),Air VPD (kPa
 1742365765.9898927,22.8,21.5,38,1.72,1.51,False,False,False
 1742365796.0975995,22.8,21.5,37,1.75,1.54,False,False,False
 1742365826.216607,22.8,21.5,35,1.8,1.59,False,False,False
+1742365856.323729,22.8,21.5,35,1.8,1.59,False,False,False
+1742365886.4326348,22.9,21.6,36,1.79,1.57,False,False,False
